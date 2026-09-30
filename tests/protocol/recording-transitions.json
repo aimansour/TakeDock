@@ -1,0 +1,7 @@
+[
+  { "state": "idle", "action": "start", "expected": "recording" },
+  { "state": "recording", "action": "pause", "expected": "paused" },
+  { "state": "paused", "action": "resume", "expected": "recording" },
+  { "state": "recording", "action": "stop", "expected": "idle" },
+  { "state": "paused", "action": "stop", "expected": "idle" }
+]

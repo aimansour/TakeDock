@@ -1,0 +1,3 @@
+[workspace]
+members = ["src-tauri", "tests/fixtures/adb"]
+resolver = "3"
