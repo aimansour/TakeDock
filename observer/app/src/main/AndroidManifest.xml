@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <queries><package android:name="net.sourceforge.opencamera" /></queries>
+    <application android:label="TakeDock Observer" android:allowBackup="false" android:supportsRtl="true" />
+    <instrumentation android:name=".ObserverInstrumentation"
+        android:targetPackage="app.takedock.observer"
+        android:label="TakeDock Observer" android:functionalTest="false" />
+</manifest>

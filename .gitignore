@@ -1,0 +1,13 @@
+node_modules/
+dist/
+target/
+.superpowers/
+.gradle/
+**/build/
+observer/local.properties
+src-tauri/resources/observer.apk
+*.keystore
+*.jks
+*.key
+test-results/
+*.log

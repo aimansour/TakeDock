@@ -1,7 +1,8 @@
 # TakeDock design proposal
 
 Status: updated with the user's Svelte choice, release and sound requirements,
-and a focused Windows Desktop E2E verification layer. Implementation has not begun.
+and a focused Windows Desktop E2E verification layer. Inline implementation
+was authorized and started on 2026-10-01.
 
 ## Intended outcome
 
