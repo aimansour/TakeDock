@@ -69,7 +69,7 @@ pub fn parse_listing(bytes: &[u8]) -> Result<Vec<Video>, String> {
         return Err("invalid_listing".into());
     }
     let mut videos = Vec::new();
-    for pair in pieces.chunks_exact(2) {
+    for pair in pieces.as_chunks::<2>().0 {
         let name = std::str::from_utf8(pair[0]).map_err(err)?;
         takedock_files::validate_name(name)?;
         let entry: Entry = serde_json::from_slice(pair[1]).map_err(err)?;

@@ -273,6 +273,13 @@ impl Shared {
                 }
             }
             if shared.current(generation) {
+                let mut model = shared.model.lock().unwrap();
+                if model.state.generation != generation {
+                    return;
+                }
+                model.channel_failed();
+                drop(model);
+                shared.state();
                 shared.error("command_shell_closed", "");
             }
         });

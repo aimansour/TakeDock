@@ -89,6 +89,9 @@ fn main() {
                     .replace("$?", "0");
                 println!("{marker}");
                 io::stdout().flush().unwrap();
+                if root.join("close-shell").exists() {
+                    return;
+                }
             }
         }
         [

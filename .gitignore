@@ -13,3 +13,10 @@ test-results/
 *.log
 .cargo/config.toml
 src-tauri/resources/file-helper/
+.npmrc
+src-tauri/gen/
+src-tauri/icons/android/
+src-tauri/icons/ios/
+src-tauri/icons/Square*Logo.png
+src-tauri/icons/StoreLogo.png
+src-tauri/icons/icon.icns

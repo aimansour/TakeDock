@@ -28,6 +28,7 @@ pub struct RecordingMachine {
     observation_sequence: u64,
     event_time: u64,
     pending: VecDeque<Pending>,
+    capture_available: bool,
 }
 impl RecordingMachine {
     pub fn new(session: String, generation: u64) -> Self {
@@ -42,6 +43,7 @@ impl RecordingMachine {
             observation_sequence: 0,
             event_time: 0,
             pending: VecDeque::new(),
+            capture_available: true,
         }
     }
     pub fn observe(&mut self, observation: Observation) -> Vec<VerificationResult> {
@@ -54,6 +56,10 @@ impl RecordingMachine {
         }
         self.observation_sequence = observation.seq;
         self.event_time = observation.event_time;
+        if !self.capture_available {
+            self.state.observed = observation.state;
+            return Vec::new();
+        }
         self.state.observer_ready = true;
         self.state.foreground = observation.foreground;
         self.state.video_mode = observation.video_mode;
@@ -176,6 +182,14 @@ impl RecordingMachine {
             status: "failed".into(),
             message: "command_delivery_failed".into(),
         }]
+    }
+    pub fn channel_failed(&mut self) {
+        self.capture_available = false;
+        self.pending.clear();
+        self.state.pending = 0;
+        self.state.observer_ready = false;
+        self.state.predicted = RecordingState::Unknown;
+        self.state.condition = "command_shell_closed".into();
     }
 }
 

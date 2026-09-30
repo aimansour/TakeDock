@@ -27,6 +27,46 @@ fn fixture() -> (tempfile::TempDir, String) {
     (directory, executable.to_str().unwrap().into())
 }
 #[test]
+fn a_closed_capture_shell_removes_controls_even_when_observer_keeps_emitting() {
+    let (directory, adb_path) = fixture();
+    let errors = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let output = errors.clone();
+    let engine = Engine::start(
+        Settings {
+            adb_path,
+            ..Default::default()
+        },
+        directory.path().join("observer.apk"),
+        Arc::new(move |event, payload| {
+            if event == "operation-error" {
+                output.lock().unwrap().push(payload)
+            }
+        }),
+    )
+    .unwrap();
+    wait_until(|| engine.snapshot().predicted == RecordingState::Idle);
+    std::fs::write(directory.path().join("close-shell"), b"").unwrap();
+    engine.dispatch(RecordingAction::Start).unwrap();
+    wait_until(|| {
+        errors
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|event| event["code"] == "command_shell_closed")
+    });
+    std::fs::write(
+        directory.path().join("state.json"),
+        "{\"state\":\"paused\",\"foreground\":true,\"video_mode\":true}",
+    )
+    .unwrap();
+    wait_until(|| engine.snapshot().observed == RecordingState::Paused);
+    assert_eq!(engine.snapshot().predicted, RecordingState::Unknown);
+    assert!(!engine.snapshot().observer_ready);
+    assert!(engine.dispatch(RecordingAction::Resume).is_err());
+    assert!(engine.lease().is_ok());
+    engine.shutdown();
+}
+#[test]
 fn commands_reach_a_real_persistent_process_while_observation_is_held() {
     let (directory, adb_path) = fixture();
     let engine = Engine::start(

@@ -1,0 +1,256 @@
+:root {
+  font-family: 'Segoe UI', Tahoma, Arial, sans-serif;
+  color: #e5eeed;
+  background: #10161e;
+  color-scheme: dark;
+  font-size: 16px;
+  line-height: 1.5;
+}
+* {
+  box-sizing: border-box;
+}
+body {
+  margin: 0;
+}
+button,
+input,
+select {
+  font: inherit;
+}
+button {
+  border: 1px solid #425566;
+  border-radius: 8px;
+  padding: 0.65rem 1rem;
+  background: #23313e;
+  color: #edf4f2;
+  cursor: pointer;
+  min-height: 44px;
+}
+button:hover {
+  background: #2d4152;
+}
+button.primary {
+  background: #58dfb0;
+  color: #092219;
+  border-color: #58dfb0;
+  font-weight: 650;
+}
+button.danger {
+  border-color: #dd8390;
+  color: #ffc6ce;
+}
+button:focus-visible,
+input:focus-visible,
+select:focus-visible {
+  outline: 3px solid #a8dfff;
+  outline-offset: 3px;
+}
+input,
+select {
+  background: #111d28;
+  color: #e5eeed;
+  border: 1px solid #526677;
+  border-radius: 7px;
+  padding: 0.6rem;
+  min-height: 44px;
+}
+input[type='checkbox'] {
+  width: 22px;
+  height: 22px;
+  min-height: 22px;
+  accent-color: #58dfb0;
+}
+h1,
+h2,
+h3 {
+  line-height: 1.2;
+  margin-block-start: 0;
+}
+h1 {
+  font-size: 1.7rem;
+  margin-block-end: 0.45rem;
+}
+h2 {
+  font-size: 1.35rem;
+}
+h3 {
+  font-size: 1rem;
+}
+.app-header {
+  padding: 1.8rem 2rem 1rem;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  max-width: 1180px;
+  margin: auto;
+}
+.app-header p {
+  color: #b8c9d2;
+  margin: 0;
+}
+.wordmark {
+  display: inline-block;
+  border: 2px solid #58dfb0;
+  border-radius: 12px;
+  padding: 0.5rem;
+  color: #58dfb0;
+  font-weight: 750;
+}
+.navigation {
+  display: flex;
+  gap: 0.7rem;
+  padding: 0.6rem 2rem 1.4rem;
+  max-width: 1180px;
+  margin: auto;
+}
+.navigation button.active {
+  border-color: #58dfb0;
+  background: #1c3d37;
+}
+main {
+  padding: 0 2rem 2rem;
+  max-width: 1180px;
+  margin: auto;
+}
+.panel {
+  background: #192531;
+  border: 1px solid #344758;
+  border-radius: 14px;
+  padding: 1.4rem;
+  margin-block-end: 1.2rem;
+}
+.panel-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-block-end: 1rem;
+}
+.panel-heading h2 {
+  margin: 0;
+}
+.capture-actions {
+  display: flex;
+  gap: 0.9rem;
+  flex-wrap: wrap;
+  margin-block: 1.4rem;
+}
+.capture-actions button {
+  font-size: 1.25rem;
+  padding: 1rem 1.5rem;
+  min-width: 190px;
+}
+.state-line {
+  font-size: 1.2rem;
+  color: #8bedc9;
+}
+.hint {
+  color: #b8c9d2;
+}
+.toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.7rem;
+  margin-block: 1rem;
+}
+.input-row {
+  display: flex;
+  gap: 0.6rem;
+  margin-block-end: 1.2rem;
+}
+.input-row input {
+  flex: 1;
+  min-width: 0;
+}
+.settings-panel form > label {
+  display: block;
+  margin-block: 0.8rem 0.4rem;
+}
+.settings-panel select {
+  width: 200px;
+}
+.check-label {
+  display: flex !important;
+  gap: 0.6rem;
+  align-items: center;
+}
+.table-scroll {
+  overflow-x: auto;
+}
+table {
+  border-collapse: collapse;
+  width: 100%;
+  margin-block-start: 1rem;
+  text-align: start;
+}
+th,
+td {
+  text-align: start;
+  border-bottom: 1px solid #3b4e5f;
+  padding: 0.8rem 0.65rem;
+  vertical-align: middle;
+}
+td:nth-child(2) {
+  word-break: break-word;
+  min-width: 170px;
+}
+th {
+  color: #bfe4d7;
+}
+fieldset {
+  border: 1px solid #657e90;
+  border-radius: 8px;
+  padding: 1rem;
+  margin-block: 1rem;
+}
+legend {
+  padding-inline: 0.3rem;
+}
+fieldset label {
+  display: block;
+}
+fieldset input {
+  width: 100%;
+}
+.result-text {
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.job {
+  border-top: 1px solid #3b4e5f;
+  padding-block: 1rem;
+}
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+@media (max-width: 760px) {
+  .app-header,
+  .navigation {
+    padding-inline: 1rem;
+  }
+  main {
+    padding-inline: 1rem;
+  }
+  .input-row {
+    flex-wrap: wrap;
+  }
+  .input-row input {
+    width: 100%;
+  }
+  .panel {
+    padding: 1rem;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  * {
+    scroll-behavior: auto;
+  }
+}
