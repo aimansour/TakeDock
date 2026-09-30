@@ -11,3 +11,5 @@ src-tauri/resources/observer.apk
 *.key
 test-results/
 *.log
+.cargo/config.toml
+src-tauri/resources/file-helper/

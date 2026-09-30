@@ -1,3 +1,3 @@
 [workspace]
-members = ["src-tauri", "tests/fixtures/adb"]
+members = ["src-tauri", "file-helper", "tests/fixtures/adb"]
 resolver = "3"

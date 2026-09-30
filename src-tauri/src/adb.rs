@@ -119,6 +119,15 @@ impl Adb {
         timeout_ms: u64,
         cancelled: &std::sync::atomic::AtomicBool,
     ) -> Result<Vec<u8>, String> {
+        self.output_with_cancellation(serial, arguments, timeout_ms, &[cancelled])
+    }
+    pub fn output_with_cancellation(
+        &self,
+        serial: &str,
+        arguments: &[&str],
+        timeout_ms: u64,
+        flags: &[&std::sync::atomic::AtomicBool],
+    ) -> Result<Vec<u8>, String> {
         use std::{
             sync::atomic::Ordering,
             thread,
@@ -139,14 +148,14 @@ impl Adb {
         });
         let start = Instant::now();
         let status = loop {
-            if cancelled.load(Ordering::Acquire)
+            if flags.iter().any(|flag| flag.load(Ordering::Acquire))
                 || start.elapsed().as_millis() >= timeout_ms as u128
             {
                 let _ = child.kill();
                 let _ = child.wait();
                 let _ = output.join();
                 let _ = errors.join();
-                return Err(if cancelled.load(Ordering::Acquire) {
+                return Err(if flags.iter().any(|flag| flag.load(Ordering::Acquire)) {
                     "operation_cancelled"
                 } else {
                     "adb_operation_timeout"

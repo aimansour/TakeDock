@@ -1,4 +1,5 @@
 pub mod adb;
+pub mod files;
 pub mod model;
 pub mod recording;
 pub mod session;

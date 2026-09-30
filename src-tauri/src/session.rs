@@ -450,6 +450,13 @@ impl Engine {
             .map(|active| active.lease.clone())
             .ok_or("no_device".into())
     }
+    pub fn lease_for(&self, generation: u64) -> Result<DeviceLease, String> {
+        let lease = self.lease()?;
+        if lease.generation != generation || !self.shared.current(generation) {
+            return Err("session_replaced".into());
+        }
+        Ok(lease)
+    }
     pub fn dispatch(&self, action: RecordingAction) -> Result<CommandReceipt, String> {
         self.dispatch_for(action, self.snapshot().generation)
     }
