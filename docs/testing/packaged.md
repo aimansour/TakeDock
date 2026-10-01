@@ -1,5 +1,38 @@
 # Packaged acceptance
 
+## Public release 0.1.2
+
+The first public release is [v0.1.2](https://github.com/aimansour/TakeDock/releases/tag/v0.1.2),
+from commit `e93337c90f17070f0482980556cc8420f8fa5a85`.
+[Full Validate](https://github.com/aimansour/TakeDock/actions/runs/36849709685),
+[signed validation-only Release](https://github.com/aimansour/TakeDock/actions/runs/36852536607)
+and the [publishing Release](https://github.com/aimansour/TakeDock/actions/runs/36855034339)
+all passed their mandatory Rust, UI, Observer, Windows desktop and quality gates.
+The validation-only run correctly skipped publication; the tag run published
+only after all gates succeeded.
+
+- Final local suites passed 59 Rust/process/helper tests and 33 frontend tests,
+  with no Svelte diagnostics and strict desktop Clippy passing.
+- The tagged Windows build passed all four real EXE/WebView2/Rust IPC acceptance
+  flows. Its WebView2 and EdgeDriver versions were both 153.0.4234.48;
+  tauri-driver was 2.1.0. The extended flows also cover named shared windows,
+  same-process relaunch, exact duration and native progress.
+- All seven public assets downloaded successfully without authentication.
+  Their checksum inventory matched. The public installer SHA-256 is
+  `331cf0dccb87ca56609158301b77ef2322fe28e074e74e40d533aea8e0748597`.
+- The downloaded installer's updater signature and signed version `0.1.2`
+  verified independently. Extraction matched all 11 resources in the published
+  acceptance report, including the EXE, Observer, three ABI helpers and notices.
+  The public Observer APK matched the persistent certificate fingerprint.
+- The [public updater endpoint](https://github.com/aimansour/TakeDock/releases/latest/download/latest.json)
+  returned HTTP 200 without an Authorization header on 2026-10-01 at 11:40 UTC.
+  Its bytes matched the tagged manifest and its installer URL/signature matched
+  the verified public assets. No update was installed during these checks.
+
+The release includes `acceptance.json`, `release-verification.json` and
+`SHA256SUMS.txt` so the exact published build can be checked independently.
+These automated results retain the physical acceptance limits below.
+
 ## Evidence on 2026-10-01
 
 - Host: Windows 10 Pro 22H2, build 19045; Rust 1.98.1; Node 24.21.0.
@@ -30,7 +63,7 @@ user. No assistant native UI/phone driving resumes during their testing.
 
 ## Timing and remaining coverage
 
-The 0.1.1 release EXE passed all four extended fixture E2E cases on Windows 10:
+The earlier local 0.1.1 candidate's release EXE passed all four extended fixture E2E cases on Windows 10:
 named Ctrl+Shift+N windows, independent names, shared English/Arabic settings,
 single-process relaunch, precise duration and final native progress, alongside
 the original four flows. Native tests passed 51/51; component/controller tests
