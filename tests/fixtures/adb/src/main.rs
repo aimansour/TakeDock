@@ -117,6 +117,13 @@ fn main() {
                     println!("INSTRUMENTATION_CODE: 0");
                     return;
                 }
+                if let Ok(raw) = fs::read(root.join("inject-event.json")) {
+                    let event: Value = serde_json::from_slice(&raw).unwrap();
+                    let injected_session = event["session"].as_str().unwrap_or(session).to_owned();
+                    emit(&injected_session, event);
+                    fs::remove_file(root.join("inject-event.json")).unwrap();
+                    fs::write(root.join("injected-event"), b"").unwrap();
+                }
                 if !root.join("hold-observation").exists() {
                     let state = read_state(&root);
                     if state != previous {

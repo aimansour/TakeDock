@@ -1,0 +1,7 @@
+{
+  "name": "@takedock/no-driver-download",
+  "version": "0.1.0",
+  "private": true,
+  "license": "MIT",
+  "main": "index.cjs"
+}

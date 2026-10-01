@@ -15,7 +15,8 @@
     "format:check": "prettier --check src tests/desktop package.json vite.config.ts tsconfig.json",
     "tauri": "tauri",
     "desktop:dev": "tauri dev --features desktop",
-    "desktop:build": "tauri build --features desktop"
+    "desktop:build": "tauri build --features desktop",
+    "test:desktop": "pwsh -NoProfile -File scripts/test-desktop.ps1"
   },
   "dependencies": {
     "svelte": "5.57.1",
@@ -35,6 +36,17 @@
     "svelte-check": "4.7.6",
     "typescript": "6.0.3",
     "vite": "8.3.1",
-    "vitest": "5.0.3"
+    "vitest": "5.0.3",
+    "@wdio/cli": "9.32.0",
+    "@wdio/local-runner": "9.32.0",
+    "@wdio/mocha-framework": "9.32.0",
+    "@wdio/spec-reporter": "9.32.0",
+    "@wdio/globals": "9.31.3",
+    "tsx": "4.23.15",
+    "extract-zip": "file:./tests/desktop/no-driver-download"
+  },
+  "overrides": {
+    "serialize-javascript": "7.1.2",
+    "extract-zip": "$extract-zip"
   }
 }
