@@ -34,6 +34,7 @@ public static class TakeDockLimitedProcess {
  [DllImport("advapi32.dll",SetLastError=true)] static extern bool GetKernelObjectSecurity(IntPtr handle,uint information,byte[] descriptor,uint length,out uint needed);
  [DllImport("advapi32.dll",SetLastError=true)] static extern bool SetKernelObjectSecurity(IntPtr handle,uint information,byte[] descriptor);
  [DllImport("advapi32.dll",CharSet=CharSet.Unicode,SetLastError=true)] static extern bool ConvertStringSecurityDescriptorToSecurityDescriptor(string text,uint revision,out IntPtr descriptor,out uint length);
+ [DllImport("advapi32.dll",CharSet=CharSet.Unicode,SetLastError=true)] static extern bool ConvertSecurityDescriptorToStringSecurityDescriptor(byte[] descriptor,uint revision,uint information,out IntPtr text,out uint length);
  [DllImport("kernel32.dll")] static extern IntPtr LocalFree(IntPtr memory);
  [DllImport("advapi32.dll",SetLastError=true)] static extern bool OpenProcessToken(IntPtr process,uint access,out IntPtr token);
  [DllImport("advapi32.dll",SetLastError=true)] static extern bool CreateRestrictedToken(IntPtr token,uint flags,uint disable,IntPtr sids,uint privileges,IntPtr deleted,uint restrict,IntPtr restricted,out IntPtr limited);
@@ -71,12 +72,21 @@ public static class TakeDockLimitedProcess {
   }
   // The elevated runner can create a High-labelled mutex even when its DACL
   // permits the account. Chromium's ordinary browser requires Medium access.
+  var current=KernelSecurityText(handle);
+  if(!current.Contains(";;;HI)") && !current.Contains(";;;SI)"))return;
   IntPtr label=IntPtr.Zero;
   try {
    if(!ConvertStringSecurityDescriptorToSecurityDescriptor("S:(ML;;NW;;;ME)",1,out label,out var length))throw new Win32Exception();
    var medium=new byte[length];Marshal.Copy(label,medium,0,(int)length);
    if(!SetKernelObjectSecurity(handle,0x10,medium))throw new Win32Exception();
   } finally {if(label!=IntPtr.Zero)LocalFree(label);}
+ }
+ static string KernelSecurityText(IntPtr handle) {
+  IntPtr text=IntPtr.Zero;
+  try {
+   if(!ConvertSecurityDescriptorToStringSecurityDescriptor(ReadKernelSecurity(handle,0x14),1,0x14,out text,out var length))throw new Win32Exception();
+   return Marshal.PtrToStringUni(text);
+  } finally {if(text!=IntPtr.Zero)LocalFree(text);}
  }
  public static int Run(string application,string command,string directory,string user,string password,string userSid,string profile,string temporary) {
   IntPtr token=IntPtr.Zero,limited=IntPtr.Zero,station=IntPtr.Zero,desktop=IntPtr.Zero,startupMutex=IntPtr.Zero; byte[] stationAcl=null,desktopAcl=null,mutexAcl=null; PROCESS_INFORMATION info=default;
@@ -104,7 +114,9 @@ public static class TakeDockLimitedProcess {
    startupMutex=CreateMutex(IntPtr.Zero,false,"Local\\ChromeProcessSingletonStartup!");
    if(startupMutex==IntPtr.Zero)throw new Win32Exception();
    mutexAcl=ReadKernelSecurity(startupMutex,0x14);
+   Console.WriteLine("HostedMutexSession="+System.Diagnostics.Process.GetCurrentProcess().SessionId+"; account="+userSid+"; before="+KernelSecurityText(startupMutex));
    GrantChromiumStartupAccess(startupMutex,userSid);
+   Console.WriteLine("HostedMutexAfter="+KernelSecurityText(startupMutex));
    var environment=new System.Collections.Generic.SortedDictionary<string,string>(StringComparer.OrdinalIgnoreCase);
    foreach(System.Collections.DictionaryEntry pair in Environment.GetEnvironmentVariables())environment[(string)pair.Key]=(string)pair.Value;
    environment["USERPROFILE"]=profile;environment["APPDATA"]=profile+"\\AppData\\Roaming";environment["LOCALAPPDATA"]=profile+"\\AppData\\Local";environment["USERNAME"]=user;

@@ -19,14 +19,21 @@ using Microsoft.Web.WebView2.WinForms;
 class Probe {
  [System.Runtime.InteropServices.DllImport("kernel32.dll",CharSet=System.Runtime.InteropServices.CharSet.Unicode,SetLastError=true)] static extern IntPtr CreateMutex(IntPtr attributes,bool owner,string name);
  [System.Runtime.InteropServices.DllImport("kernel32.dll")] static extern bool CloseHandle(IntPtr handle);
+ [System.Runtime.InteropServices.DllImport("kernel32.dll",CharSet=System.Runtime.InteropServices.CharSet.Unicode,SetLastError=true)] static extern IntPtr OpenMutex(uint access,bool inherit,string name);
  [STAThread] static int Main() {
   Console.WriteLine("Identity="+System.Security.Principal.WindowsIdentity.GetCurrent().Name);
+  Console.WriteLine("UserSID="+System.Security.Principal.WindowsIdentity.GetCurrent().User.Value);
   Console.WriteLine("Session="+Process.GetCurrentProcess().SessionId);
   Console.WriteLine("LocalAppData="+Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData));
   Console.WriteLine("UserFolderOverride="+Environment.GetEnvironmentVariable("WEBVIEW2_USER_DATA_FOLDER"));
   var mutex=CreateMutex(IntPtr.Zero,false,@"Local\ChromeProcessSingletonStartup!");
   if(mutex==IntPtr.Zero)Console.WriteLine("ChromiumStartupMutexWin32Error="+System.Runtime.InteropServices.Marshal.GetLastWin32Error());
   else {Console.WriteLine("ChromiumStartupMutex=accessible");CloseHandle(mutex);}
+  foreach(uint access in new uint[]{1,0x100000,0x20000,0x40000,0x80000,0x10000}) {
+   var handle=OpenMutex(access,false,@"Local\ChromeProcessSingletonStartup!");
+   Console.WriteLine("MutexAccess="+access.ToString("x")+"; result="+(handle==IntPtr.Zero?System.Runtime.InteropServices.Marshal.GetLastWin32Error():0));
+   if(handle!=IntPtr.Zero)CloseHandle(handle);
+  }
   var directory=Path.Combine(Path.GetTempPath(),"webview-profile-"+Guid.NewGuid());
   Directory.CreateDirectory(directory);
   using(var file=new FileStream(Path.Combine(directory,"lockfile"),FileMode.Create,FileAccess.Write,FileShare.Read,4096,FileOptions.DeleteOnClose))Console.WriteLine("ProfileLockFile=accessible");
