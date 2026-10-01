@@ -22,6 +22,7 @@ class Probe {
   Console.WriteLine("Session="+Process.GetCurrentProcess().SessionId);
   Console.WriteLine("LocalAppData="+Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData));
   Console.WriteLine("UserFolderOverride="+Environment.GetEnvironmentVariable("WEBVIEW2_USER_DATA_FOLDER"));
+  try {using(var mutex=new System.Threading.Mutex(false,@"Local\ChromeProcessSingletonStartup!"))Console.WriteLine("ChromiumStartupMutex=accessible");}catch(Exception failure){Console.WriteLine("ChromiumStartupMutex="+failure);}
   var directory=Path.Combine(Path.GetTempPath(),"webview-profile-"+Guid.NewGuid());
   Directory.CreateDirectory(directory);
   using(var file=new FileStream(Path.Combine(directory,"lockfile"),FileMode.Create,FileAccess.Write,FileShare.Read,4096,FileOptions.DeleteOnClose))Console.WriteLine("ProfileLockFile=accessible");
@@ -59,11 +60,13 @@ if($signature.Status -ne 'Valid' -or $signature.SignerCertificate.Subject -notma
 $trace=Join-Path $probeRoot 'trace.pml'
 $csv=Join-Path $probeRoot 'trace.csv'
 Start-Process -FilePath $monitor -ArgumentList @('/AcceptEula','/Quiet','/Minimized','/BackingFile',('"'+$trace+'"')) -WindowStyle Hidden|Out-Null
-& $monitor /WaitForIdle
+$idle=Start-Process -FilePath $monitor -ArgumentList '/WaitForIdle' -WindowStyle Hidden -PassThru
+if(-not $idle.WaitForExit(15000)){Stop-Process -Id $idle.Id; Write-Output 'Diagnostic monitor readiness timed out'}
 try {& "$PSScriptRoot/run-desktop-unprivileged.ps1" -Script $script -OutputDirectory $probeRoot}
 finally {
  & $monitor /Terminate
- Start-Process -FilePath $monitor -ArgumentList @('/Quiet','/OpenLog',('"'+$trace+'"'),'/SaveAs',('"'+$csv+'"')) -WindowStyle Hidden -Wait
+ $export=Start-Process -FilePath $monitor -ArgumentList @('/AcceptEula','/Quiet','/OpenLog',('"'+$trace+'"'),'/SaveAs',('"'+$csv+'"')) -WindowStyle Hidden -PassThru
+ if(-not $export.WaitForExit(30000)){Stop-Process -Id $export.Id; Write-Output 'Diagnostic monitor export timed out'}
  if(Test-Path $csv) {
   Import-Csv -LiteralPath $csv | Where-Object {$_.'Process Name' -in @('Probe.exe','msedgewebview2.exe') -and ($_.Result -eq 'ACCESS DENIED' -or $_.Path -match 'lockfile' -or $_.Operation -in @('Process Start','Process Create'))} | Select-Object -Last 60 | ConvertTo-Json -Depth 4
  }
