@@ -31,5 +31,5 @@ jobs:
         if: always()
         with:
           name: webview-host-diagnostics
-          path: '${{ runner.temp }}/webview-host-probe/trace.csv'
+          path: '${{ runner.temp }}/webview-host-probe/safe-results.csv'
           if-no-files-found: warn

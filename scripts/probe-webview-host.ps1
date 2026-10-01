@@ -68,6 +68,9 @@ finally {
  $export=Start-Process -FilePath $monitor -ArgumentList @('/AcceptEula','/Quiet','/OpenLog',('"'+$trace+'"'),'/SaveAs',('"'+$csv+'"')) -WindowStyle Hidden -PassThru
  if(-not $export.WaitForExit(30000)){Stop-Process -Id $export.Id; Write-Output 'Diagnostic monitor export timed out'}
  if(Test-Path $csv) {
-  Import-Csv -LiteralPath $csv | Where-Object {$_.'Process Name' -in @('Probe.exe','msedgewebview2.exe') -and ($_.Result -eq 'ACCESS DENIED' -or $_.Path -match 'lockfile' -or $_.Operation -in @('Process Start','Process Create'))} | Select-Object -Last 60 | ConvertTo-Json -Depth 4
+  # Process-start records can contain inherited environment secrets. Export only
+  # file/registry results and paths, never command lines or environment blocks.
+  Import-Csv -LiteralPath $csv | Where-Object {$_.'Process Name' -in @('Probe.exe','msedgewebview2.exe') -and ($_.Result -eq 'ACCESS DENIED' -or $_.Path -match 'lockfile') -and $_.Operation -notin @('Process Start','Process Create')} | Select-Object 'Process Name',PID,Operation,Path,Result | Export-Csv -LiteralPath (Join-Path $probeRoot 'safe-results.csv') -NoTypeInformation
+  Get-Content -LiteralPath (Join-Path $probeRoot 'safe-results.csv') -Tail 60
  }
 }
