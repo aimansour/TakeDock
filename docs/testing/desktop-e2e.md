@@ -5,11 +5,13 @@ WebdriverIO's standard client, an external `tauri-driver` and Edge WebDriver.
 No WebDriver plugin, test server, command mock or test hook is shipped in the
 application. One serial spec owns the shared Windows profile and restart flow.
 
-1. Offline launch, named keyboard controls and silent success defaults.
+1. Offline launch, named keyboard controls, silent success defaults, named
+   Ctrl+Shift+N windows, shared settings and single-instance relaunch.
 2. Start/pause/resume/stop and focus continuity while the external peer holds
    observation. All four shell commands must arrive before the barrier is
    released. A stale observation cannot restore an inapplicable control.
-3. Two-file selection, single-only rename and exact batch-copy SHA-256 outputs.
+3. Two-file selection, single-only rename, container duration, completed native
+   progress and exact batch-copy SHA-256 outputs.
 4. Arabic/RTL, destination and optional success sound across an actual restart.
 
 Install the pinned build dependencies, build Observer/file-helper resources,
@@ -47,6 +49,11 @@ debugging arguments in elevated hosts, preventing normal session creation:
 [WebdriverIO investigation](https://github.com/webdriverio/desktop-mobile/issues/542).
 No product test hook, downgraded runtime, changed host policy or allow-failure
 condition is used. All four cases remain mandatory.
+
+The ordinary account and its noninteractive desktop are test-owned and removed
+on completion. No local accounts are created outside GitHub-hosted runners.
+The fixture is built in the parent CI job before the child starts. Local tests
+use the current user's filtered token and preserve the existing Settings bytes.
 
 ## Development dependency decisions
 

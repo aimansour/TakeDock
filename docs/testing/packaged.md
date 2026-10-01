@@ -30,6 +30,14 @@ user. No assistant native UI/phone driving resumes during their testing.
 
 ## Timing and remaining coverage
 
+The 0.1.1 release EXE passed all four extended fixture E2E cases on Windows 10:
+named Ctrl+Shift+N windows, independent names, shared English/Arabic settings,
+single-process relaunch, precise duration and final native progress, alongside
+the original four flows. Native tests passed 51/51; component/controller tests
+passed 23/23. The persistently signed 0.1.1 Observer passed unit tests, Release
+lint and certificate verification; all three ABI helpers rebuilt successfully.
+This does not claim a physical screen-reader audit of the new progress feature.
+
 Earlier real-device Rust debug acceptance measured command enqueue at
 28–88 microseconds and event confirmation at 126–877 ms in one four-action run.
 These are backend debug measurements, not production desktop activation latency.
