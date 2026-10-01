@@ -42,7 +42,7 @@ public static class TakeDockLimitedProcess {
    if(!OpenProcessToken(GetCurrentProcess(),0x000F01FF,out token))throw new Win32Exception();
    if(!CreateRestrictedToken(token,4,0,IntPtr.Zero,0,IntPtr.Zero,0,IntPtr.Zero,out limited))throw new Win32Exception();
    var startup=new STARTUPINFO {cb=Marshal.SizeOf<STARTUPINFO>(),desktop="winsta0\\default",flags=1,show=0};
-   if(user==null) {
+   if(string.IsNullOrEmpty(user)) {
     if(!CreateProcessAsUser(limited,application,new System.Text.StringBuilder(command),IntPtr.Zero,IntPtr.Zero,false,0x08000000,IntPtr.Zero,directory,ref startup,out info))throw new Win32Exception();
    } else {
    // A test-owned noninteractive station avoids changing the host desktop ACL.
