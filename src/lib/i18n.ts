@@ -1,4 +1,15 @@
 const en = {
+  updates: 'Updates',
+  updateHelp:
+    'Checks run automatically at startup. Installation starts only when you choose Install update. Installation closes TakeDock and cancels pending operations.',
+  checkUpdates: 'Check for updates',
+  installUpdate: 'Install update',
+  update_checking: 'Checking for updates…',
+  update_available: 'An update is available.',
+  update_current: 'You have the latest release.',
+  update_installing: 'Downloading and verifying the update…',
+  update_installed: 'Update installed.',
+  update_error: 'The update operation failed. You can try checking again.',
   recording: 'Recording',
   videos: 'Videos',
   settings: 'Settings',
@@ -95,6 +106,17 @@ const en = {
   adb_not_found: 'ADB was not found. Set its executable path in Settings.',
 } as const;
 const ar: Record<keyof typeof en, string> = {
+  updates: 'التحديثات',
+  updateHelp:
+    'يُفحص التحديث تلقائيًا عند التشغيل. يبدأ التثبيت فقط عند اختيار تثبيت التحديث. التثبيت يغلق TakeDock ويلغي العمليات المعلقة.',
+  checkUpdates: 'فحص التحديثات',
+  installUpdate: 'تثبيت التحديث',
+  update_checking: 'جارٍ فحص التحديثات…',
+  update_available: 'يتوفر تحديث جديد.',
+  update_current: 'لديك أحدث إصدار منشور.',
+  update_installing: 'جارٍ تنزيل التحديث والتحقق منه…',
+  update_installed: 'ثُبّت التحديث.',
+  update_error: 'تعذرت عملية التحديث. يمكنك إعادة الفحص.',
   recording: 'التصوير',
   videos: 'الفيديوهات',
   settings: 'الإعدادات',

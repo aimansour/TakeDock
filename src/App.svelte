@@ -3,6 +3,7 @@
   import RecordingPanel from './components/RecordingPanel.svelte';
   import VideosPanel from './components/VideosPanel.svelte';
   import SettingsPanel from './components/SettingsPanel.svelte';
+  import UpdatePanel from './components/UpdatePanel.svelte';
   import { createSession } from './lib/session.svelte';
   import { ipc } from './lib/ipc';
   import { shortcut } from './lib/keyboard';
@@ -85,7 +86,13 @@
       onAdb={ipc.adb}
       onReconnect={app.reconnect}
       onError={app.fail}
-    />{/if}
+      ><UpdatePanel
+        language={data.settings.language}
+        update={data.update}
+        onCheck={app.checkUpdates}
+        onInstall={app.installUpdate}
+      /></SettingsPanel
+    >{/if}
   {#if data.result}<section class="panel result-panel">
       <h2>{t(data.settings.language, 'result')}</h2>
       <p class="result-text">{t(data.settings.language, data.result)}</p>

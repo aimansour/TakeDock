@@ -1,3 +1,4 @@
+use crate::updates::{UpdateInfo, Updates};
 use crate::{
     files::{FileService, JobKind, Video},
     model::*,
@@ -9,6 +10,7 @@ use std::{
     sync::{Arc, Mutex, RwLock},
 };
 use tauri::{Emitter, Manager, State};
+use tauri_plugin_updater::UpdaterExt;
 
 struct Runtime {
     engine: RwLock<Option<Arc<Engine>>>,
@@ -19,6 +21,7 @@ struct Runtime {
     sink: EventSink,
     errors: Mutex<Vec<String>>,
     reconnect: Mutex<()>,
+    updates: Updates,
 }
 impl Runtime {
     fn engine(&self) -> Result<Arc<Engine>, String> {
@@ -147,9 +150,77 @@ fn play_feedback(success: bool, state: State<'_, Arc<Runtime>>) {
         }
     });
 }
+#[tauri::command]
+async fn check_update(
+    app: tauri::AppHandle,
+    state: State<'_, Arc<Runtime>>,
+) -> Result<Option<UpdateInfo>, String> {
+    if state
+        .updates
+        .installing
+        .load(std::sync::atomic::Ordering::Acquire)
+    {
+        return Err("update_in_progress".into());
+    }
+    let runtime = state.inner().clone();
+    let cleanup = runtime.clone();
+    let update = app
+        .updater_builder()
+        .timeout(std::time::Duration::from_secs(15))
+        .on_before_exit(move || cleanup.shutdown())
+        .build()
+        .map_err(|error| error.to_string())?
+        .check()
+        .await
+        .map_err(|error| error.to_string())?;
+    let info = update.as_ref().map(|update| UpdateInfo {
+        version: update.version.clone(),
+        notes: update.body.clone().unwrap_or_default(),
+        date: update.date.map(|date| date.to_string()).unwrap_or_default(),
+    });
+    *runtime.updates.offered.lock().unwrap() = update;
+    Ok(info)
+}
+#[tauri::command]
+async fn install_update(
+    app: tauri::AppHandle,
+    state: State<'_, Arc<Runtime>>,
+) -> Result<(), String> {
+    let runtime = state.inner().clone();
+    runtime.updates.start_install()?;
+    let update = runtime.updates.offered.lock().unwrap().clone();
+    let result = if let Some(update) = update {
+        let mut bytes = 0u64;
+        let mut previous = std::time::Instant::now();
+        update
+            .download_and_install(
+                move |chunk, total| {
+                    bytes += chunk as u64;
+                    if previous.elapsed() > std::time::Duration::from_millis(100) {
+                        let _ = app.emit(
+                            "update-progress",
+                            serde_json::json!({"bytes":bytes,"total":total.unwrap_or(0)}),
+                        );
+                        previous = std::time::Instant::now();
+                    }
+                },
+                || {},
+            )
+            .await
+            .map_err(|error| error.to_string())
+    } else {
+        Err("update_not_checked".into())
+    };
+    runtime
+        .updates
+        .installing
+        .store(false, std::sync::atomic::Ordering::Release);
+    result
+}
 pub fn run() {
     let app = tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .invoke_handler(tauri::generate_handler![
             bootstrap,
             recording_action,
@@ -158,7 +229,9 @@ pub fn run() {
             cancel_file_job,
             save_settings,
             reconnect,
-            play_feedback
+            play_feedback,
+            check_update,
+            install_update
         ])
         .setup(|app| {
             let config = app.path().app_config_dir()?.join("settings.json");
@@ -181,6 +254,7 @@ pub fn run() {
                 sink,
                 errors: Mutex::new(errors),
                 reconnect: Mutex::new(()),
+                updates: Updates::default(),
             });
             if let Err(error) = runtime.reconnect() {
                 runtime.errors.lock().unwrap().push(error);

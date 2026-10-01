@@ -18,7 +18,10 @@ export function shortcut(
     return null;
   return (
     ({ r: 'record', p: 'pause', v: 'videos', s: 'settings' } as const)[
-      event.key.toLowerCase() as 'r' | 'p' | 'v' | 's'
+      (event.code.startsWith('Key')
+        ? event.code.slice(3)
+        : event.key
+      ).toLowerCase() as 'r' | 'p' | 'v' | 's'
     ] ?? null
   );
 }

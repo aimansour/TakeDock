@@ -8,6 +8,7 @@ import type {
   JobKind,
   CommandReceipt,
 } from './types';
+import type { UpdateInfo } from './updater';
 export const ipc = {
   bootstrap: () =>
     invoke<{ session: SessionState; settings: Settings; errors: string[] }>(
@@ -27,6 +28,8 @@ export const ipc = {
   cancel: (id: string) => invoke<void>('cancel_file_job', { id }),
   save: (settings: Settings) => invoke<Settings>('save_settings', { settings }),
   reconnect: () => invoke<void>('reconnect'),
+  checkUpdate: () => invoke<UpdateInfo | null>('check_update'),
+  installUpdate: () => invoke<void>('install_update'),
   sound: (success: boolean) => invoke<void>('play_feedback', { success }),
   folder: () =>
     open({ directory: true, multiple: false }).then((path) =>

@@ -8,6 +8,8 @@ import type {
 } from './types';
 import { RecordingController } from './recording';
 import { ipc } from './ipc';
+import { UpdaterController } from './updater';
+import type { UpdateState } from './updater';
 export function createSession() {
   const data = $state({
     session: { ...initialSession },
@@ -17,6 +19,13 @@ export function createSession() {
     result: '',
     loading: false,
     view: 'recording' as 'recording' | 'videos' | 'settings',
+    update: {
+      status: 'idle',
+      info: null,
+      message: '',
+      bytes: 0,
+      total: 0,
+    } as UpdateState,
   });
   let destroyed = false;
   let refreshSerial = 0;
@@ -39,6 +48,15 @@ export function createSession() {
     },
     fail,
   );
+  const updater = new UpdaterController(
+    { check: ipc.checkUpdate, install: ipc.installUpdate },
+    (update) => {
+      if (!destroyed) data.update = update;
+    },
+    (message) => {
+      if (!destroyed) fail(message);
+    },
+  );
   function applyJob(event: JobEvent) {
     if (event.generation !== data.session.generation) return;
     const index = data.jobs.findIndex((job) => job.id === event.id);
@@ -54,6 +72,12 @@ export function createSession() {
   async function initialize() {
     try {
       const outcomes = await Promise.allSettled([
+        ipc.listen<{ bytes: number; total: number }>(
+          'update-progress',
+          (value) => {
+            if (!destroyed) updater.progress(value.bytes, value.total);
+          },
+        ),
         ipc.listen<SessionState>('session-state', (value) => {
           if (!destroyed) controller.reconcile(value);
         }),
@@ -125,6 +149,7 @@ export function createSession() {
       data.settings = initial.settings;
       controller.reconcile(initial.session);
       if (initial.errors.length) data.result = initial.errors.join('\n');
+      void updater.checkForUpdate('startup');
     } catch (error) {
       if (!destroyed) fail(String(error));
     }
@@ -181,6 +206,12 @@ export function createSession() {
     activate,
     fail,
     dispose,
+    checkUpdates: () => {
+      void updater.checkForUpdate('manual');
+    },
+    installUpdate: () => {
+      void updater.installUpdate();
+    },
     job: (
       kind: Parameters<typeof ipc.job>[0],
       videos: Video[],

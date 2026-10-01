@@ -10,6 +10,16 @@ it('ignores repeated keys, composing, and typing contexts', () => {
   expect(
     shortcut(
       new KeyboardEvent('keydown', {
+        key: 'ق',
+        code: 'KeyR',
+        ctrlKey: true,
+        shiftKey: true,
+      }),
+    ),
+  ).toBe('record');
+  expect(
+    shortcut(
+      new KeyboardEvent('keydown', {
         key: 'r',
         ctrlKey: true,
         shiftKey: true,
