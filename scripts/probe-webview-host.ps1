@@ -17,12 +17,16 @@ using System.Windows.Forms;
 using Microsoft.Web.WebView2.Core;
 using Microsoft.Web.WebView2.WinForms;
 class Probe {
+ [System.Runtime.InteropServices.DllImport("kernel32.dll",CharSet=System.Runtime.InteropServices.CharSet.Unicode,SetLastError=true)] static extern IntPtr CreateMutex(IntPtr attributes,bool owner,string name);
+ [System.Runtime.InteropServices.DllImport("kernel32.dll")] static extern bool CloseHandle(IntPtr handle);
  [STAThread] static int Main() {
   Console.WriteLine("Identity="+System.Security.Principal.WindowsIdentity.GetCurrent().Name);
   Console.WriteLine("Session="+Process.GetCurrentProcess().SessionId);
   Console.WriteLine("LocalAppData="+Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData));
   Console.WriteLine("UserFolderOverride="+Environment.GetEnvironmentVariable("WEBVIEW2_USER_DATA_FOLDER"));
-  try {using(var mutex=new System.Threading.Mutex(false,@"Local\ChromeProcessSingletonStartup!"))Console.WriteLine("ChromiumStartupMutex=accessible");}catch(Exception failure){Console.WriteLine("ChromiumStartupMutex="+failure);}
+  var mutex=CreateMutex(IntPtr.Zero,false,@"Local\ChromeProcessSingletonStartup!");
+  if(mutex==IntPtr.Zero)Console.WriteLine("ChromiumStartupMutexWin32Error="+System.Runtime.InteropServices.Marshal.GetLastWin32Error());
+  else {Console.WriteLine("ChromiumStartupMutex=accessible");CloseHandle(mutex);}
   var directory=Path.Combine(Path.GetTempPath(),"webview-profile-"+Guid.NewGuid());
   Directory.CreateDirectory(directory);
   using(var file=new FileStream(Path.Combine(directory,"lockfile"),FileMode.Create,FileAccess.Write,FileShare.Read,4096,FileOptions.DeleteOnClose))Console.WriteLine("ProfileLockFile=accessible");

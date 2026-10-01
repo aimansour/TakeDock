@@ -57,7 +57,8 @@ Chromium's session-wide `Local\ChromeProcessSingletonStartup!` mutex can already
 belong to `runneradmin`. The ordinary-account diagnostic reproduced an explicit
 access denial for that mutex and native WebView2 ProcessSingleton failure, even
 with a fresh writable profile. The launcher temporarily adds only this account
-to that mutex's DACL, restores its exact original DACL and never acquires it or
+to that mutex's DACL and makes its mandatory label Medium for ordinary Chromium.
+It restores the exact original DACL/label and never acquires it or
 changes its ownership. This hosted-only setup is tested with a standalone
 official WebView2 control before relying on the actual application suite.
 Private noninteractive stations failed native WebView2 ProcessSingleton startup.
