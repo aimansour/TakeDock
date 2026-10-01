@@ -228,23 +228,27 @@ async fn check_update(
         .check()
         .await
         .map_err(|error| error.to_string())?;
-    let info = update.as_ref().map(|update| UpdateInfo {
-        version: update.version.clone(),
-        notes: update.body.clone().unwrap_or_default(),
-        date: update.date.map(|date| date.to_string()).unwrap_or_default(),
+    let info = update.map(|update| {
+        let info = UpdateInfo {
+            token: String::new(),
+            version: update.version.clone(),
+            notes: update.body.clone().unwrap_or_default(),
+            date: update.date.map(|date| date.to_string()).unwrap_or_default(),
+        };
+        let token = runtime.updates.offered.lock().unwrap().insert(update);
+        UpdateInfo { token, ..info }
     });
-    *runtime.updates.offered.lock().unwrap() = update;
     Ok(info)
 }
 #[tauri::command]
 async fn install_update(
+    token: String,
     app: tauri::AppHandle,
     state: State<'_, Arc<Runtime>>,
 ) -> Result<(), String> {
     let runtime = state.inner().clone();
-    runtime.updates.start_install()?;
-    let update = runtime.updates.offered.lock().unwrap().clone();
-    let result = if let Some(update) = update {
+    let update = runtime.updates.start_install(&token)?;
+    let result = {
         let mut bytes = 0u64;
         let mut previous = std::time::Instant::now();
         update
@@ -263,8 +267,6 @@ async fn install_update(
             )
             .await
             .map_err(|error| error.to_string())
-    } else {
-        Err("update_not_checked".into())
     };
     runtime
         .updates

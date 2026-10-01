@@ -15,6 +15,48 @@ const ready = {
   condition: 'ready',
 };
 describe('recording control', () => {
+  it('recovers from rejected IPC without an invented accepted sequence', async () => {
+    const sent = vi.fn().mockRejectedValue(new Error('camera_not_eligible'));
+    const controller = new RecordingController(ready, sent, vi.fn(), vi.fn());
+    controller.activate('start');
+    await Promise.resolve();
+    controller.reconcile({ ...ready });
+    expect(controller.state.predicted).toBe('idle');
+    expect(controller.state.command_sequence).toBe(0);
+    expect(controller.state.pending).toBe(0);
+    controller.activate('start');
+    expect(sent).toHaveBeenCalledTimes(2);
+  });
+  it('does not erase a newer accepted receipt when an older request rejects', async () => {
+    let rejectFirst!: (error: Error) => void;
+    const sent = vi
+      .fn()
+      .mockImplementationOnce(
+        () =>
+          new Promise<CommandReceipt>((_, reject) => {
+            rejectFirst = reject;
+          }),
+      )
+      .mockResolvedValueOnce({
+        generation: 7,
+        sequence: 1,
+        predicted: 'paused',
+      });
+    const controller = new RecordingController(ready, sent, vi.fn(), vi.fn());
+    controller.activate('start');
+    controller.activate('pause');
+    await Promise.resolve();
+    rejectFirst(new Error('queue_unavailable'));
+    await Promise.resolve();
+    controller.reconcile({
+      ...ready,
+      command_sequence: 1,
+      predicted: 'paused',
+      pending: 1,
+    });
+    expect(controller.state.predicted).toBe('paused');
+    expect(controller.state.command_sequence).toBe(1);
+  });
   it('matches the literal Rust protocol cases', () => {
     for (const item of cases) {
       expect(

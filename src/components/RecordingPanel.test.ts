@@ -14,6 +14,25 @@ const ready = {
   observed: 'idle' as const,
   condition: 'ready',
 };
+it.each([
+  { foreground: false },
+  { connected: false },
+  { predicted: 'unknown' as const, condition: 'verification_unconfirmed' },
+])(
+  'preserves capture focus on a stable target when controls disappear: %o',
+  async (patch) => {
+    const { rerender } = render(RecordingPanel, {
+      state: { ...ready, predicted: 'recording' },
+      onAction: vi.fn(),
+    });
+    const stop = screen.getByRole('button', { name: 'Stop video' });
+    stop.focus();
+    await rerender({ state: { ...ready, ...patch } });
+    await tick();
+    expect(document.activeElement).not.toBe(document.body);
+    expect(document.activeElement?.textContent).toBe('Recording');
+  },
+);
 it('renders only applicable controls and keeps the primary native button focused', async () => {
   const { rerender, container } = render(RecordingPanel, {
     state: ready,

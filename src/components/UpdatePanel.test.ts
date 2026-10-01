@@ -19,7 +19,7 @@ it('keeps focus on manual check and exposes install only for an offered update',
     language: 'en',
     update: {
       status: 'available',
-      info: { version: '0.2.0', notes: 'Fixes', date: '' },
+      info: { version: '0.2.0', token: 'first', notes: 'Fixes', date: '' },
       message: '',
       bytes: 0,
       total: 0,

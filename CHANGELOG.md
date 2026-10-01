@@ -6,6 +6,11 @@ First public release, including named windows sharing one phone/settings/folder,
 single-process shortcut activation, Ctrl+Shift+N, default Videos/TakeDock saving,
 newest-first ordering, millisecond container duration and native activity progress.
 Backend result sounds occur once regardless of the number of open windows.
+Delayed repeated camera states cannot confirm newer intent prematurely; expired
+connections invalidate file selections and confirmations. Rejected capture requests
+recover without reconnecting. Shared saves retain authoritative settings, update
+installation binds to the displayed offer, interrupted journal preparation preserves
+file access, and lost camera eligibility preserves keyboard focus.
 
 ## 0.1.0 — development baseline
 

@@ -75,12 +75,16 @@ impl RecordingMachine {
         }
         .into();
         let mut results = Vec::new();
-        let final_match = self.pending.back().is_some_and(|pending| {
+        // The earliest matching intent owns the evidence. In start/pause/resume,
+        // a delayed recording state proves start, never the later resume.
+        // Missing distinct intermediate states may coalesce; repeated matching
+        // states remain unconfirmed until ordered evidence or deadline expiry.
+        if let Some(index) = self.pending.iter().position(|pending| {
             pending.boundary < observation.seq && pending.expected == observation.state
-        });
-        if final_match {
-            while let Some(pending) = self.pending.pop_front() {
-                let status = if self.pending.is_empty() {
+        }) {
+            for position in 0..=index {
+                let pending = self.pending.pop_front().unwrap();
+                let status = if position == index {
                     "confirmed"
                 } else {
                     "superseded"
@@ -92,15 +96,6 @@ impl RecordingMachine {
                     message: String::new(),
                 });
             }
-        } else if let Some(pending) = self.pending.pop_front_if(|pending| {
-            pending.boundary < observation.seq && pending.expected == observation.state
-        }) {
-            results.push(VerificationResult {
-                generation: self.state.generation,
-                sequence: pending.sequence,
-                status: "confirmed".into(),
-                message: String::new(),
-            });
         }
         self.state.pending = self.pending.len();
         if self.pending.is_empty() {
@@ -278,6 +273,43 @@ mod tests {
             ["superseded", "confirmed"]
         );
         assert_eq!(machine.state.pending, 0);
+    }
+    #[test]
+    fn delayed_ordered_states_cannot_confirm_resume_from_start_evidence() {
+        let mut machine = machine();
+        for action in [
+            RecordingAction::Start,
+            RecordingAction::Pause,
+            RecordingAction::Resume,
+        ] {
+            machine.dispatch(action, 0, 10_000).unwrap();
+        }
+        let first = machine.observe(observation(2, RecordingState::Recording));
+        assert_eq!(first.len(), 1);
+        assert_eq!(first[0].sequence, 1);
+        assert_eq!(machine.state.pending, 2);
+        machine.observe(observation(3, RecordingState::Paused));
+        assert_eq!(machine.state.predicted, RecordingState::Recording);
+        assert_eq!(machine.state.pending, 1);
+        let last = machine.observe(observation(4, RecordingState::Recording));
+        assert_eq!(last[0].sequence, 3);
+        assert_eq!(machine.state.pending, 0);
+    }
+    #[test]
+    fn ambiguous_coalesced_recording_is_not_proof_of_resume() {
+        let mut machine = machine();
+        for action in [
+            RecordingAction::Start,
+            RecordingAction::Pause,
+            RecordingAction::Resume,
+        ] {
+            machine.dispatch(action, 0, 1000).unwrap();
+        }
+        machine.observe(observation(2, RecordingState::Recording));
+        assert_eq!(machine.state.predicted, RecordingState::Recording);
+        let results = machine.expire(1000);
+        assert_eq!(results.last().unwrap().sequence, 3);
+        assert_eq!(results.last().unwrap().status, "unconfirmed");
     }
     #[test]
     fn expired_missing_evidence_is_unconfirmed_not_proven_failure() {

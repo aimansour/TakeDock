@@ -79,6 +79,7 @@
     />{/if}
   {#if data.view === 'videos'}<VideosPanel
       videos={data.videos}
+      generation={data.listingGeneration}
       connected={data.session.connected}
       loading={data.loading}
       language={data.settings.language}

@@ -16,7 +16,17 @@ export const config = {
   maxInstances: 1,
   logLevel: 'warn',
   capabilities: [
-    { 'tauri:options': { application: process.env.TAKEDOCK_APP_EXE } },
+    {
+      'tauri:options': {
+        application: process.env.TAKEDOCK_APP_EXE,
+        webviewOptions: {
+          additionalBrowserArguments: [
+            '--enable-logging',
+            `--log-file=${join(process.env.TAKEDOCK_TEST_ROOT!, 'webview.log')}`,
+          ],
+        },
+      },
+    },
   ],
   reporters: ['spec'],
   framework: 'mocha',

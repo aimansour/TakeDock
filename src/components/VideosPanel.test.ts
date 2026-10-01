@@ -19,6 +19,28 @@ const videos: Video[] = [
     identity: '{"device":1,"inode":2}',
   },
 ];
+it('discards a delete confirmation and selection across a new connection generation', async () => {
+  const user = userEvent.setup();
+  const onJob = vi.fn();
+  const { rerender } = render(VideosPanel, {
+    videos,
+    generation: 3,
+    onJob,
+    onRefresh: vi.fn(),
+  });
+  await user.click(screen.getByRole('checkbox', { name: 'Select one.mp4' }));
+  await user.click(screen.getByRole('button', { name: 'Delete from phone' }));
+  const staleConfirmation = screen.getByRole('button', {
+    name: 'Confirm deletion',
+  });
+  await rerender({ generation: 4, videos: [...videos] });
+  expect(screen.queryByRole('button', { name: 'Confirm deletion' })).toBeNull();
+  expect(
+    screen.getByRole('checkbox', { name: 'Select one.mp4' }),
+  ).not.toBeChecked();
+  staleConfirmation.click();
+  expect(onJob).not.toHaveBeenCalled();
+});
 it('allows batch operations and renders rename only for a single selection', async () => {
   const user = userEvent.setup();
   const onJob = vi.fn();
@@ -34,11 +56,11 @@ it('allows batch operations and renders rename only for a single selection', asy
   await user.click(screen.getByRole('checkbox', { name: 'Select two.mp4' }));
   expect(screen.queryByRole('button', { name: 'Rename video' })).toBeNull();
   await user.click(screen.getByRole('button', { name: 'Copy to computer' }));
-  expect(onJob).toHaveBeenCalledWith('copy', videos);
+  expect(onJob).toHaveBeenCalledWith('copy', videos, undefined, 0);
   await user.click(screen.getByRole('button', { name: 'Delete from phone' }));
   expect(onJob.mock.calls.length).toBe(1);
   await user.click(screen.getByRole('button', { name: 'Confirm deletion' }));
-  expect(onJob).toHaveBeenLastCalledWith('delete', videos);
+  expect(onJob).toHaveBeenLastCalledWith('delete', videos, undefined, 0);
   await rerender({
     videos: [{ ...videos[0], name: 'renamed.mp4' }, videos[1]],
   });

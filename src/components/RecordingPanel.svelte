@@ -13,6 +13,7 @@
   } = $props();
   let primary = $state<HTMLButtonElement>();
   let secondary = $state<HTMLButtonElement>();
+  let heading = $state<HTMLHeadingElement>();
   let eligible = $derived(
     session.connected &&
       session.observer_ready &&
@@ -24,14 +25,17 @@
     session.predicted === 'recording' || session.predicted === 'paused',
   );
   $effect.pre(() => {
-    if (!recording && secondary && document.activeElement === secondary) {
+    const focused = document.activeElement;
+    if (!eligible && (focused === primary || focused === secondary)) {
+      void tick().then(() => heading?.focus());
+    } else if (!recording && secondary && focused === secondary) {
       void tick().then(() => primary?.focus());
     }
   });
 </script>
 
 <section class="panel recording-panel">
-  <h2>{t(language, 'recording')}</h2>
+  <h2 bind:this={heading} tabindex="-1">{t(language, 'recording')}</h2>
   <p class="state-line">
     {t(
       language,

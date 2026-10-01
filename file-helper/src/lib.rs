@@ -292,11 +292,7 @@ impl Root {
             identity: expected.clone(),
         };
         let filename = format!("{token}.json");
-        let mut file = journal_directory.create_named(&filename)?;
-        file.write_all(&serde_json::to_vec(&journal).map_err(err)?)
-            .map_err(err)?;
-        file.sync_all().map_err(err)?;
-        drop(file);
+        journal_directory.publish_journal(&token, &journal)?;
         self.rename_raw(name, &journal.claim)?;
         let actual = identity(&self.open_named(&journal.claim)?)?;
         if !same_file_after_rename(&actual, expected) {
@@ -305,6 +301,34 @@ impl Root {
             return Err("source_changed".into());
         }
         Ok((journal, journal_directory, filename))
+    }
+    fn publish_journal(&self, token: &str, journal: &Journal) -> Result<(), String> {
+        self.prepare_journal(token, journal, |file, bytes| {
+            file.write_all(bytes).map_err(err)?;
+            file.sync_all().map_err(err)
+        })
+    }
+    fn prepare_journal(
+        &self,
+        token: &str,
+        journal: &Journal,
+        write: impl FnOnce(&mut File, &[u8]) -> Result<(), String>,
+    ) -> Result<(), String> {
+        let temporary = format!("{token}.tmp");
+        let bytes = serde_json::to_vec(journal).map_err(err)?;
+        let mut file = self.create_named(&temporary)?;
+        let result = write(&mut file, &bytes);
+        drop(file);
+        if let Err(error) = result {
+            let _ = self.remove_raw(&temporary);
+            return Err(error);
+        }
+        self.rename_raw(&temporary, &format!("{token}.json"))?;
+        // Android shared storage may not support directory fsync. The complete
+        // journal is nevertheless published atomically before any source claim.
+        #[cfg(all(unix, not(target_os = "android")))]
+        self.directory.sync_all().map_err(err)?;
+        Ok(())
     }
     pub fn rename(
         &self,
@@ -384,15 +408,41 @@ impl Root {
             if filename == ".lock" {
                 continue;
             }
-            let token = filename.strip_suffix(".json").ok_or("invalid_journal")?;
+            let (token, preparation) = if let Some(token) = filename.strip_suffix(".tmp") {
+                (token, true)
+            } else {
+                (
+                    filename.strip_suffix(".json").ok_or("invalid_journal")?,
+                    false,
+                )
+            };
             uuid::Uuid::parse_str(token).map_err(err)?;
+            let claim = format!(".takedock-delete-{token}");
+            if preparation {
+                if self.path.join(&claim).try_exists().map_err(err)? {
+                    return Err("invalid_journal".into());
+                }
+                directory.remove_raw(&filename)?;
+                continue;
+            }
             let mut file = directory.open_named(&filename)?;
             let mut bytes = Vec::new();
             Read::by_ref(&mut file)
                 .take(8192)
                 .read_to_end(&mut bytes)
                 .map_err(err)?;
-            let journal: Journal = serde_json::from_slice(&bytes).map_err(err)?;
+            let journal: Journal = match serde_json::from_slice(&bytes) {
+                Ok(journal) => journal,
+                Err(error) => {
+                    // Older builds could leave partial final journals before
+                    // claiming. Discard only when no corresponding claim exists.
+                    if self.path.join(&claim).try_exists().map_err(err)? {
+                        return Err(err(error));
+                    }
+                    directory.remove_raw(&filename)?;
+                    continue;
+                }
+            };
             if journal.version != 1 || journal.claim != format!(".takedock-delete-{token}") {
                 return Err("invalid_journal".into());
             }
@@ -640,6 +690,70 @@ mod tests {
             b"original"
         );
         assert!(!dir.path().join(claim).exists());
+    }
+    #[test]
+    fn interrupted_journal_preparation_does_not_disable_file_operations() {
+        for contents in [b"".as_slice(), b"{\"version\":1,".as_slice()] {
+            for suffix in ["json", "tmp"] {
+                let (dir, root) = root();
+                std::fs::write(dir.path().join("source.mp4"), b"original").unwrap();
+                let journal = root.journal_directory().unwrap();
+                let filename = format!("00000000-0000-0000-0000-000000000001.{suffix}");
+                std::fs::write(journal.path.join(&filename), contents).unwrap();
+                root.recover().unwrap();
+                assert_eq!(
+                    std::fs::read(dir.path().join("source.mp4")).unwrap(),
+                    b"original"
+                );
+                root.delete("source.mp4", &root.stat("source.mp4").unwrap())
+                    .unwrap();
+                assert!(!journal.path.join(filename).exists());
+            }
+        }
+    }
+    #[test]
+    fn corrupt_journal_with_a_claim_is_retained_for_safe_recovery() {
+        let (dir, root) = root();
+        let journal = root.journal_directory().unwrap();
+        let token = "00000000-0000-0000-0000-000000000001";
+        std::fs::write(
+            dir.path().join(format!(".takedock-delete-{token}")),
+            b"original",
+        )
+        .unwrap();
+        std::fs::write(journal.path.join(format!("{token}.json")), b"{").unwrap();
+        assert!(root.recover().is_err());
+        assert!(
+            dir.path()
+                .join(format!(".takedock-delete-{token}"))
+                .exists()
+        );
+    }
+    #[test]
+    fn journal_write_failure_never_publishes_or_claims_the_source() {
+        let (dir, root) = root();
+        std::fs::write(dir.path().join("source.mp4"), b"original").unwrap();
+        let directory = root.journal_directory().unwrap();
+        let token = "00000000-0000-0000-0000-000000000001";
+        let journal = Journal {
+            version: 1,
+            name: "source.mp4".into(),
+            claim: format!(".takedock-delete-{token}"),
+            identity: root.stat("source.mp4").unwrap(),
+        };
+        let result = directory.prepare_journal(token, &journal, |file, bytes| {
+            file.write_all(&bytes[..bytes.len() / 2]).map_err(err)?;
+            assert!(!directory.path.join(format!("{token}.json")).exists());
+            Err("storage_full".into())
+        });
+        assert_eq!(result, Err("storage_full".into()));
+        assert!(!directory.path.join(format!("{token}.json")).exists());
+        assert!(!dir.path().join(&journal.claim).exists());
+        root.recover().unwrap();
+        assert_eq!(
+            std::fs::read(dir.path().join("source.mp4")).unwrap(),
+            b"original"
+        );
     }
     #[test]
     fn helper_invocations_share_an_exclusive_root_lock() {

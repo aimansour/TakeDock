@@ -47,7 +47,9 @@ public static class TakeDockLimitedProcess {
    } else {
    // A test-owned noninteractive station avoids changing the host desktop ACL.
    string sid=System.Security.Principal.WindowsIdentity.GetCurrent().User.Value;
-   if(!ConvertStringSecurityDescriptorToSecurityDescriptor("D:(A;;GA;;;"+sid+")(A;;GA;;;"+userSid+")(A;;GA;;;SY)",1,out descriptor,out var size))throw new Win32Exception();
+   // Chromium's sandboxed AppContainer/low-IL children also need access to
+   // their private desktop. This ACL applies only to this disposable station.
+   if(!ConvertStringSecurityDescriptorToSecurityDescriptor("D:(A;;GA;;;"+sid+")(A;;GA;;;"+userSid+")(A;;GA;;;SY)(A;;GA;;;S-1-15-2-1)(A;;GA;;;S-1-15-2-2)S:(ML;;NW;;;LW)",1,out descriptor,out var size))throw new Win32Exception();
    var attributes=new SECURITY_ATTRIBUTES {length=Marshal.SizeOf<SECURITY_ATTRIBUTES>(),descriptor=descriptor};
    string name="TakeDockTest-"+Guid.NewGuid().ToString("N");
    station=CreateWindowStation(name,0,0x000f037f,ref attributes);

@@ -16,6 +16,7 @@ export function createSession() {
     settings: { ...defaultSettings },
     windowName: '',
     videos: [] as Video[],
+    listingGeneration: 0,
     jobs: [] as JobEvent[],
     result: '',
     loading: false,
@@ -46,6 +47,19 @@ export function createSession() {
     initialSession,
     ipc.recording,
     (session) => {
+      if (
+        session.generation !== data.session.generation ||
+        !session.connected
+      ) {
+        refreshSerial++;
+        data.videos = [];
+        data.listingGeneration = 0;
+        data.jobs = [];
+        data.loading = false;
+        progress.clear();
+        if (flush) clearTimeout(flush);
+        flush = undefined;
+      }
       data.session = session;
     },
     fail,
@@ -168,8 +182,7 @@ export function createSession() {
         ...data.jobs,
         ...initial.jobs.filter(
           (job) =>
-            !existing.has(job.id) &&
-            job.generation === initial.session.generation,
+            !existing.has(job.id) && job.generation === data.session.generation,
         ),
       ].slice(0, 20);
       if (initial.errors.length) data.result = initial.errors.join('\n');
@@ -189,8 +202,10 @@ export function createSession() {
         !destroyed &&
         request === refreshSerial &&
         generation === data.session.generation
-      )
+      ) {
         data.videos = videos;
+        data.listingGeneration = generation;
+      }
     } catch (error) {
       if (
         !destroyed &&
@@ -204,7 +219,12 @@ export function createSession() {
   }
   async function save(settings: Settings) {
     try {
-      data.settings = await ipc.save(settings);
+      const revision = settingsRevision;
+      const saved = await ipc.save(settings);
+      if (destroyed) return;
+      // Rust serializes persistence and broadcasts under the shared lock.
+      // A response cannot replace a newer authoritative broadcast.
+      if (revision === settingsRevision) data.settings = saved;
       data.result = 'saved';
       sound(true);
     } catch (error) {
@@ -252,8 +272,13 @@ export function createSession() {
       kind: Parameters<typeof ipc.job>[0],
       videos: Video[],
       stem?: string,
+      listingGeneration = data.listingGeneration,
     ) => {
       const generation = data.session.generation;
+      if (!data.session.connected || listingGeneration !== generation) {
+        fail('session_replaced');
+        return;
+      }
       void ipc
         .job(kind, videos, generation, stem)
         .then((id) => {

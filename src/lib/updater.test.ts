@@ -5,9 +5,12 @@ it('startup and manual checks offer updates without installing or moving focus',
   document.body.append(button);
   button.focus();
   const api = {
-    check: vi
-      .fn()
-      .mockResolvedValue({ version: '0.2.0', notes: 'Fixes', date: '' }),
+    check: vi.fn().mockResolvedValue({
+      version: '0.2.0',
+      token: 'first',
+      notes: 'Fixes',
+      date: '',
+    }),
     install: vi.fn().mockResolvedValue(undefined),
   };
   const updater = new UpdaterController(api, vi.fn(), vi.fn());
@@ -49,4 +52,15 @@ it('does not install before a checked offer or issue duplicate concurrent checks
   expect(api.check).toHaveBeenCalledTimes(1);
   resolve(null);
   await Promise.all([first, second]);
+});
+it('installs only the immutable offer explicitly displayed in this window', async () => {
+  const offer = { version: '0.2.0', token: 'offer-X', notes: '', date: '' };
+  const api = {
+    check: vi.fn().mockResolvedValue(offer),
+    install: vi.fn().mockResolvedValue(undefined),
+  };
+  const updater = new UpdaterController(api, vi.fn(), vi.fn());
+  await updater.checkForUpdate('manual');
+  await updater.installUpdate();
+  expect(api.install).toHaveBeenCalledWith('offer-X');
 });

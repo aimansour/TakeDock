@@ -17,6 +17,13 @@ const mocks = vi.hoisted(() => ({
 }));
 vi.mock('./ipc', () => ({ ipc: mocks }));
 import { createSession } from './session.svelte';
+const video = {
+  name: 'one.mp4',
+  size: 10,
+  modified_ms: 0,
+  ready: true,
+  identity: 'opaque',
+};
 beforeEach(() => {
   vi.clearAllMocks();
   mocks.bootstrap.mockResolvedValue({
@@ -150,6 +157,7 @@ it('makes accepted queued jobs available for cancellation without a worker resul
   mocks.job.mockResolvedValue('job-one');
   const app = createSession();
   await app.initialize();
+  await app.refresh();
   app.job('copy', [
     {
       name: 'one.mp4',
@@ -166,5 +174,68 @@ it('makes accepted queued jobs available for cancellation without a worker resul
     status: 'queued',
     generation: 3,
   });
+  app.dispose();
+});
+it('invalidates an expired listing and running activity on connection replacement', async () => {
+  const callbacks = new Map<string, (value: unknown) => void>();
+  mocks.listen.mockImplementation(
+    (name: string, cb: (value: unknown) => void) => {
+      callbacks.set(name, cb);
+      return Promise.resolve(vi.fn());
+    },
+  );
+  mocks.videos.mockResolvedValue([video] as never);
+  const app = createSession();
+  await app.initialize();
+  await app.refresh();
+  const oldVideos = [...app.data.videos];
+  callbacks.get('file-job')?.({
+    id: 'old-job',
+    generation: 3,
+    kind: 'copy',
+    status: 'queued',
+    results: [],
+  });
+  callbacks.get('session-state')?.({
+    ...initialSession,
+    generation: 4,
+    connected: true,
+  });
+  expect(app.data.videos).toEqual([]);
+  expect(app.data.jobs).toEqual([]);
+  expect(app.data.loading).toBe(false);
+  app.job('delete', oldVideos, undefined, 3);
+  expect(mocks.job).not.toHaveBeenCalled();
+  app.dispose();
+});
+it('keeps the authoritative shared settings when save replies arrive in reverse order', async () => {
+  let broadcast!: (value: unknown) => void;
+  mocks.listen.mockImplementation(
+    (name: string, cb: (value: unknown) => void) => {
+      if (name === 'settings-changed') broadcast = cb;
+      return Promise.resolve(vi.fn());
+    },
+  );
+  const app = createSession();
+  await app.initialize();
+  let finish!: (value: unknown) => void;
+  mocks.save.mockImplementation(
+    () =>
+      new Promise((resolve) => {
+        finish = resolve;
+      }),
+  );
+  const first = { ...defaultSettings, destination: 'C:\\First' };
+  const second = {
+    ...defaultSettings,
+    destination: 'C:\\Second',
+    language: 'ar' as const,
+  };
+  const saving = app.save(first);
+  broadcast(first);
+  broadcast(second);
+  finish(first);
+  await saving;
+  expect(app.data.settings).toEqual(second);
   app.dispose();
 });

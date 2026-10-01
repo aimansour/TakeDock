@@ -11,13 +11,20 @@
     connected = true,
     onRefresh,
     loading = false,
+    generation = 0,
   }: {
     videos: Video[];
-    onJob: (kind: JobKind, videos: Video[], stem?: string) => void;
+    onJob: (
+      kind: JobKind,
+      videos: Video[],
+      stem?: string,
+      generation?: number,
+    ) => void;
     language?: 'en' | 'ar';
     connected?: boolean;
     onRefresh: () => void;
     loading?: boolean;
+    generation?: number;
   } = $props();
   let selected = $state<string[]>([]);
   let renaming = $state(false);
@@ -26,6 +33,24 @@
   let renameInput = $state<HTMLInputElement>();
   let confirmation = $state<HTMLButtonElement>();
   let toolbar = $state<HTMLButtonElement>();
+  let selectionGeneration = $state(0);
+  $effect.pre(() => {
+    if (generation !== selectionGeneration || !connected) {
+      const formFocused =
+        document.activeElement === confirmation ||
+        document.activeElement === renameInput;
+      selected = [];
+      deleting = [];
+      renaming = false;
+      selectionGeneration = generation;
+      if (formFocused) void tick().then(() => toolbar?.focus());
+    }
+  });
+  function job(kind: JobKind, videos: Video[], stem?: string) {
+    if (!connected || selectionGeneration !== generation || !videos.length)
+      return;
+    onJob(kind, videos, stem, selectionGeneration);
+  }
   const chosen = $derived(
     videos.filter((video) => video.ready && selected.includes(videoKey(video))),
   );
@@ -79,10 +104,8 @@
   {#if connected && chosen.length}
     <p>{t(language, 'selected')}: {chosen.length}</p>
     <div class="toolbar">
-      <button onclick={() => onJob('copy', chosen)}
-        >{t(language, 'copy')}</button
-      ><button onclick={() => onJob('move', chosen)}
-        >{t(language, 'move')}</button
+      <button onclick={() => job('copy', chosen)}>{t(language, 'copy')}</button
+      ><button onclick={() => job('move', chosen)}>{t(language, 'move')}</button
       >
       <button
         class="danger"
@@ -100,7 +123,7 @@
     <form
       onsubmit={(event) => {
         event.preventDefault();
-        onJob('rename', [...chosen], stem);
+        job('rename', [...chosen], stem);
         closeForm();
       }}
     >
@@ -136,7 +159,7 @@
           class="danger"
           bind:this={confirmation}
           onclick={() => {
-            onJob('delete', deleting);
+            job('delete', deleting);
             closeForm();
           }}>{t(language, 'confirmDelete')}</button
         ><button onclick={closeForm}>{t(language, 'cancel')}</button>

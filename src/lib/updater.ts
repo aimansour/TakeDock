@@ -1,4 +1,5 @@
 export interface UpdateInfo {
+  token: string;
   version: string;
   notes: string;
   date: string;
@@ -19,7 +20,7 @@ export interface UpdateState {
 }
 export interface UpdateApi {
   check: () => Promise<UpdateInfo | null>;
-  install: () => Promise<void>;
+  install: (token: string) => Promise<void>;
 }
 export class UpdaterController {
   state: UpdateState = {
@@ -61,7 +62,7 @@ export class UpdaterController {
     if (this.state.status !== 'available' || !this.state.info) return;
     this.set({ status: 'installing', bytes: 0, total: 0, message: '' });
     try {
-      await this.api.install();
+      await this.api.install(this.state.info.token);
       this.set({ status: 'installed' });
     } catch (error) {
       this.set({ status: 'error', message: String(error) });

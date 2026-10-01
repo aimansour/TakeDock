@@ -68,6 +68,23 @@ try {
     New-Item -ItemType Directory -Path 'test-results/desktop' -Force|Out-Null
     $report|ConvertTo-Json -Depth 10|Set-Content -LiteralPath 'test-results/desktop/acceptance.json'
     Write-Output 'PASS: all four release Desktop E2E cases.'
+} catch {
+    if($testRoot) {
+        foreach($diagnostic in @('driver-error.log','webview.log')) {
+            $diagnosticPath=Join-Path $testRoot $diagnostic
+            if(Test-Path -LiteralPath $diagnosticPath){Get-Content -LiteralPath $diagnosticPath -Tail 80 | Write-Output}
+        }
+        if($env:GITHUB_ACTIONS -eq 'true' -and $env:RUNNER_ENVIRONMENT -eq 'github-hosted') {
+            $probe=$null
+            try {
+                $probe=Start-Process -FilePath $Executable -WindowStyle Hidden -PassThru -RedirectStandardOutput (Join-Path $testRoot 'native-output.log') -RedirectStandardError (Join-Path $testRoot 'native-error.log')
+                if($probe.WaitForExit(3000)){Write-Output "Native startup diagnostic exit: $($probe.ExitCode)"}
+                else {Write-Output 'Native startup diagnostic remains running'}
+                Get-Content -LiteralPath (Join-Path $testRoot 'native-error.log') -ErrorAction SilentlyContinue | Write-Output
+            } finally {if($probe -and -not $probe.HasExited){Stop-Process -Id $probe.Id -ErrorAction SilentlyContinue}}
+        }
+    }
+    throw
 } finally {
     if($driverProcess -and -not $driverProcess.HasExited){Stop-Process -Id $driverProcess.Id -ErrorAction SilentlyContinue}
     if($profilePrepared){
