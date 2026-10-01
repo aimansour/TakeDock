@@ -2,7 +2,7 @@ name: Windows test environment
 on:
   push:
     branches: ['Nova/**']
-    paths: ['scripts/run-desktop-unprivileged.ps1', '.github/workflows/desktop-environment.yml']
+    paths: ['scripts/run-desktop-unprivileged.ps1', 'scripts/probe-webview-host.ps1', '.github/workflows/desktop-environment.yml']
 permissions:
   contents: read
 jobs:
@@ -25,3 +25,5 @@ jobs:
           } catch {
             if($_.Exception.Message -notmatch 'exit code 37'){throw}
           }
+      - name: Isolate ordinary-user WebView2 startup
+        run: ./scripts/probe-webview-host.ps1
