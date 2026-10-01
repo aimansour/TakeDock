@@ -30,7 +30,9 @@ Final review regression coverage now includes rejected capture IPC recovery with
 an invented backend sequence, delayed start/pause/resume evidence, expired-session
 selections/delete confirmations, cleared retired-session activity, reversed shared
 save responses, immutable approved update offers, and focus retained on the recording
-heading when capture eligibility disappears. All 32 frontend and 58 Windows Rust/
+heading when capture eligibility disappears. Monotonic snapshot revisions reject
+reordered broadcasts and bootstrap responses independently of accepted command
+numbers. All 33 frontend and 59 Windows Rust/
 process/helper tests pass, with zero Svelte diagnostics and strict desktop Clippy.
 
 Sound uses a background Windows audio thread: optional rising two-note success,

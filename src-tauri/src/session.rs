@@ -70,7 +70,9 @@ impl Shared {
         self.started.elapsed().as_millis() as u64
     }
     fn state(&self) {
-        let state = self.model.lock().unwrap().state.clone();
+        // Stamp under the model lock; serialization/emission remain outside it.
+        // Receivers can discard an older snapshot delivered by another thread.
+        let state = self.model.lock().unwrap().snapshot_for_event();
         (self.sink)("session-state", serde_json::to_value(state).unwrap());
     }
     fn results(&self, results: Vec<VerificationResult>) {
@@ -446,7 +448,7 @@ impl Engine {
         })
     }
     pub fn snapshot(&self) -> SessionState {
-        self.shared.model.lock().unwrap().state.clone()
+        self.shared.model.lock().unwrap().snapshot_for_event()
     }
     pub fn lease(&self) -> Result<DeviceLease, String> {
         self.shared

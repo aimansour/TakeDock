@@ -107,7 +107,11 @@ export class RecordingController {
   reconcile(incoming: SessionState): void {
     if (incoming.generation < this.backend.generation) return;
     if (incoming.generation !== this.backend.generation) this.requests = [];
-    else if (incoming.command_sequence < this.backend.command_sequence) return;
+    else if (
+      incoming.command_sequence < this.backend.command_sequence ||
+      incoming.revision < this.backend.revision
+    )
+      return;
     this.backend = incoming;
     if (!incoming.connected || !incoming.observer_ready) this.requests = [];
     this.publish();

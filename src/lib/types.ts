@@ -2,6 +2,7 @@ export type RecordingState = 'unknown' | 'idle' | 'recording' | 'paused';
 export type RecordingAction = 'start' | 'stop' | 'pause' | 'resume';
 export interface SessionState {
   generation: number;
+  revision: number;
   connected: boolean;
   observer_ready: boolean;
   foreground: boolean;
@@ -49,6 +50,7 @@ export interface JobEvent {
 }
 export const initialSession: SessionState = {
   generation: 0,
+  revision: 0,
   connected: false,
   observer_ready: false,
   foreground: false,

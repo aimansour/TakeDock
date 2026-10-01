@@ -19,15 +19,14 @@ public static class TakeDockLimitedProcess {
   public IntPtr bytes,input,output,error;
  }
  [StructLayout(LayoutKind.Sequential)] struct PROCESS_INFORMATION {public IntPtr process,thread;public int pid,tid;}
- [StructLayout(LayoutKind.Sequential)] struct SECURITY_ATTRIBUTES {public int length;public IntPtr descriptor;public int inherit;}
- [DllImport("advapi32.dll",CharSet=CharSet.Unicode,SetLastError=true)] static extern bool ConvertStringSecurityDescriptorToSecurityDescriptor(string sddl,uint revision,out IntPtr descriptor,out uint size);
- [DllImport("user32.dll",CharSet=CharSet.Unicode,SetLastError=true)] static extern IntPtr CreateWindowStation(string name,uint flags,uint access,ref SECURITY_ATTRIBUTES attributes);
+ [DllImport("user32.dll",CharSet=CharSet.Unicode,SetLastError=true)] static extern IntPtr OpenWindowStation(string name,bool inherit,uint access);
  [DllImport("user32.dll",SetLastError=true)] static extern IntPtr GetProcessWindowStation();
  [DllImport("user32.dll",SetLastError=true)] static extern bool SetProcessWindowStation(IntPtr station);
- [DllImport("user32.dll",CharSet=CharSet.Unicode,SetLastError=true)] static extern IntPtr CreateDesktop(string name,IntPtr device,IntPtr mode,uint flags,uint access,ref SECURITY_ATTRIBUTES attributes);
+ [DllImport("user32.dll",CharSet=CharSet.Unicode,SetLastError=true)] static extern IntPtr OpenDesktop(string name,uint flags,bool inherit,uint access);
+ [DllImport("user32.dll",SetLastError=true)] static extern bool GetUserObjectSecurity(IntPtr handle,ref uint information,byte[] descriptor,uint length,out uint needed);
+ [DllImport("user32.dll",SetLastError=true)] static extern bool SetUserObjectSecurity(IntPtr handle,ref uint information,byte[] descriptor);
  [DllImport("user32.dll")] static extern bool CloseDesktop(IntPtr desktop);
  [DllImport("user32.dll")] static extern bool CloseWindowStation(IntPtr station);
- [DllImport("kernel32.dll")] static extern IntPtr LocalFree(IntPtr memory);
  [DllImport("advapi32.dll",CharSet=CharSet.Unicode,SetLastError=true)] static extern bool CreateProcessWithLogonW(string user,string domain,string password,uint logon,string app,System.Text.StringBuilder command,uint flags,IntPtr environment,string directory,ref STARTUPINFO startup,out PROCESS_INFORMATION info);
  [DllImport("kernel32.dll")] static extern IntPtr GetCurrentProcess();
  [DllImport("kernel32.dll",SetLastError=true)] static extern bool CloseHandle(IntPtr handle);
@@ -36,8 +35,21 @@ public static class TakeDockLimitedProcess {
  [DllImport("advapi32.dll",CharSet=CharSet.Unicode,SetLastError=true)] static extern bool CreateProcessAsUser(IntPtr token,string app,System.Text.StringBuilder command,IntPtr processAttributes,IntPtr threadAttributes,bool inherit,uint flags,IntPtr environment,string directory,ref STARTUPINFO startup,out PROCESS_INFORMATION info);
  [DllImport("kernel32.dll",SetLastError=true)] static extern uint WaitForSingleObject(IntPtr handle,uint milliseconds);
  [DllImport("kernel32.dll",SetLastError=true)] static extern bool GetExitCodeProcess(IntPtr process,out uint code);
+ static byte[] GrantDesktopAccess(IntPtr handle,string userSid,int mask) {
+  uint information=4,needed;
+  GetUserObjectSecurity(handle,ref information,null,0,out needed);
+  if(needed==0)throw new Win32Exception();
+  var original=new byte[needed];
+  if(!GetUserObjectSecurity(handle,ref information,original,needed,out needed))throw new Win32Exception();
+  var security=new System.Security.AccessControl.RawSecurityDescriptor(original,0);
+  if(security.DiscretionaryAcl==null)return original;
+  security.DiscretionaryAcl.InsertAce(security.DiscretionaryAcl.Count,new System.Security.AccessControl.CommonAce(System.Security.AccessControl.AceFlags.None,System.Security.AccessControl.AceQualifier.AccessAllowed,mask,new System.Security.Principal.SecurityIdentifier(userSid),false,null));
+  var modified=new byte[security.BinaryLength];security.GetBinaryForm(modified,0);
+  if(!SetUserObjectSecurity(handle,ref information,modified))throw new Win32Exception();
+  return original;
+ }
  public static int Run(string application,string command,string directory,string user,string password,string userSid,string profile,string temporary) {
-  IntPtr token=IntPtr.Zero,limited=IntPtr.Zero,descriptor=IntPtr.Zero,station=IntPtr.Zero,desktop=IntPtr.Zero; PROCESS_INFORMATION info=default;
+  IntPtr token=IntPtr.Zero,limited=IntPtr.Zero,station=IntPtr.Zero,desktop=IntPtr.Zero; byte[] stationAcl=null,desktopAcl=null; PROCESS_INFORMATION info=default;
   try {
    if(!OpenProcessToken(GetCurrentProcess(),0x000F01FF,out token))throw new Win32Exception();
    if(!CreateRestrictedToken(token,4,0,IntPtr.Zero,0,IntPtr.Zero,0,IntPtr.Zero,out limited))throw new Win32Exception();
@@ -45,21 +57,17 @@ public static class TakeDockLimitedProcess {
    if(string.IsNullOrEmpty(user)) {
     if(!CreateProcessAsUser(limited,application,new System.Text.StringBuilder(command),IntPtr.Zero,IntPtr.Zero,false,0x08000000,IntPtr.Zero,directory,ref startup,out info))throw new Win32Exception();
    } else {
-   // A test-owned noninteractive station avoids changing the host desktop ACL.
-   string sid=System.Security.Principal.WindowsIdentity.GetCurrent().User.Value;
-   // Chromium's sandboxed AppContainer/low-IL children also need access to
-   // their private desktop. This ACL applies only to this disposable station.
-   if(!ConvertStringSecurityDescriptorToSecurityDescriptor("D:(A;;GA;;;"+sid+")(A;;GA;;;"+userSid+")(A;;GA;;;SY)(A;;GA;;;S-1-15-2-1)(A;;GA;;;S-1-15-2-2)S:(ML;;NW;;;LW)",1,out descriptor,out var size))throw new Win32Exception();
-   var attributes=new SECURITY_ATTRIBUTES {length=Marshal.SizeOf<SECURITY_ATTRIBUTES>(),descriptor=descriptor};
-   string name="TakeDockTest-"+Guid.NewGuid().ToString("N");
-   station=CreateWindowStation(name,0,0x000f037f,ref attributes);
+   // Hosted disposable VM only: WebView2 needs the interactive station.
+   // Preserve its exact DACL, grant only this random test account, restore on exit.
+   station=OpenWindowStation("winsta0",false,0x000f037f);
    if(station==IntPtr.Zero)throw new Win32Exception();
+   stationAcl=GrantDesktopAccess(station,userSid,0x000f037f);
    var previous=GetProcessWindowStation();
    if(!SetProcessWindowStation(station))throw new Win32Exception();
-   try {desktop=CreateDesktop("Default",IntPtr.Zero,IntPtr.Zero,0,0x000f01ff,ref attributes);}
+   try {desktop=OpenDesktop("Default",0,false,0x000f01ff);}
    finally {if(!SetProcessWindowStation(previous))throw new Win32Exception();}
    if(desktop==IntPtr.Zero)throw new Win32Exception();
-   startup.desktop=name+"\\Default";
+   desktopAcl=GrantDesktopAccess(desktop,userSid,0x000f01ff);
    var environment=new System.Collections.Generic.SortedDictionary<string,string>(StringComparer.OrdinalIgnoreCase);
    foreach(System.Collections.DictionaryEntry pair in Environment.GetEnvironmentVariables())environment[(string)pair.Key]=(string)pair.Value;
    environment["USERPROFILE"]=profile;environment["APPDATA"]=profile+"\\AppData\\Roaming";environment["LOCALAPPDATA"]=profile+"\\AppData\\Local";environment["USERNAME"]=user;
@@ -76,9 +84,13 @@ public static class TakeDockLimitedProcess {
    return unchecked((int)code);
   } finally {
    foreach(var handle in new[]{info.thread,info.process,limited,token})if(handle!=IntPtr.Zero)CloseHandle(handle);
+   uint information=4;
+   bool restored=true;
+   if(desktopAcl!=null)restored &= SetUserObjectSecurity(desktop,ref information,desktopAcl);
+   if(stationAcl!=null)restored &= SetUserObjectSecurity(station,ref information,stationAcl);
    if(desktop!=IntPtr.Zero)CloseDesktop(desktop);
    if(station!=IntPtr.Zero)CloseWindowStation(station);
-   if(descriptor!=IntPtr.Zero)LocalFree(descriptor);
+   if(!restored)throw new Win32Exception("Failed to restore hosted desktop access");
   }
  }
 }

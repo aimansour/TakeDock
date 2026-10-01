@@ -31,6 +31,10 @@ pub struct RecordingMachine {
     capture_available: bool,
 }
 impl RecordingMachine {
+    pub fn snapshot_for_event(&mut self) -> SessionState {
+        self.state.revision += 1;
+        self.state.clone()
+    }
     pub fn new(session: String, generation: u64) -> Self {
         Self {
             state: SessionState {
@@ -237,6 +241,15 @@ mod tests {
         }
         assert_eq!(machine.state.predicted, RecordingState::Idle);
         assert_eq!(machine.state.pending, 4);
+    }
+    #[test]
+    fn event_snapshots_have_distinct_revisions_without_new_commands() {
+        let mut machine = machine();
+        let older = machine.snapshot_for_event();
+        let newer = machine.snapshot_for_event();
+        assert!(newer.revision > older.revision);
+        assert_eq!(newer.command_sequence, older.command_sequence);
+        assert_eq!(machine.state.revision, newer.revision);
     }
     #[test]
     fn old_observation_never_rewinds_new_intent() {

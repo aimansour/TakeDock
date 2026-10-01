@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.1.1 — 2026-10-01
+## 0.1.2 — 2026-10-01
 
 First public release, including named windows sharing one phone/settings/folder,
 single-process shortcut activation, Ctrl+Shift+N, default Videos/TakeDock saving,
@@ -11,6 +11,13 @@ connections invalidate file selections and confirmations. Rejected capture reque
 recover without reconnecting. Shared saves retain authoritative settings, update
 installation binds to the displayed offer, interrupted journal preparation preserves
 file access, and lost camera eligibility preserves keyboard focus.
+Monotonic session snapshot revisions reject out-of-order desktop events even
+when the accepted command number is unchanged.
+
+## 0.1.1 — local acceptance candidate
+
+Named-window and progress acceptance candidate, superseded by the final snapshot
+ordering repair. Never published as a GitHub release.
 
 ## 0.1.0 — development baseline
 

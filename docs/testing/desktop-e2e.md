@@ -50,8 +50,12 @@ debugging arguments in elevated hosts, preventing normal session creation:
 No product test hook, downgraded runtime, changed host policy or allow-failure
 condition is used. All four cases remain mandatory.
 
-The ordinary account and its noninteractive desktop are test-owned and removed
-on completion. No local accounts are created outside GitHub-hosted runners.
+The ordinary account is test-owned and removed on completion. Only on disposable
+GitHub-hosted VMs, the launcher adds this account's access to `WinSta0/Default`
+and restores the exact original desktop/window-station DACLs in `finally`.
+Private noninteractive stations failed native WebView2 ProcessSingleton startup.
+This follows [Windows interactive-client access](https://learn.microsoft.com/en-us/windows/win32/secauthz/processes-in-the-client-security-context).
+No local accounts or desktop ACL changes occur on the developer's computer.
 The fixture is built in the parent CI job before the child starts. Local tests
 use the current user's filtered token and preserve the existing Settings bytes.
 

@@ -62,6 +62,7 @@ pub struct VerificationResult {
 #[derive(Debug, Clone, Serialize, Default)]
 pub struct SessionState {
     pub generation: u64,
+    pub revision: u64,
     pub connected: bool,
     pub observer_ready: bool,
     pub foreground: bool,

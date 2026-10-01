@@ -15,6 +15,30 @@ const ready = {
   condition: 'ready',
 };
 describe('recording control', () => {
+  it('rejects reordered snapshots even when their accepted command sequence matches', () => {
+    const controller = new RecordingController(
+      ready,
+      vi.fn(),
+      vi.fn(),
+      vi.fn(),
+    );
+    controller.reconcile({
+      ...ready,
+      revision: 12,
+      command_sequence: 3,
+      predicted: 'recording',
+      observed: 'recording',
+    });
+    controller.reconcile({
+      ...ready,
+      revision: 11,
+      command_sequence: 3,
+      predicted: 'paused',
+      observed: 'paused',
+    });
+    expect(controller.state.predicted).toBe('recording');
+    expect(controller.state.observed).toBe('recording');
+  });
   it('recovers from rejected IPC without an invented accepted sequence', async () => {
     const sent = vi.fn().mockRejectedValue(new Error('camera_not_eligible'));
     const controller = new RecordingController(ready, sent, vi.fn(), vi.fn());
