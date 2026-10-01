@@ -1,0 +1,27 @@
+name: Windows test environment
+on:
+  push:
+    branches: ['Nova/**']
+    paths: ['scripts/run-desktop-unprivileged.ps1', '.github/workflows/desktop-environment.yml']
+permissions:
+  contents: read
+jobs:
+  restricted-user:
+    runs-on: windows-2025
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with: {persist-credentials: false}
+      - name: Probe ordinary user process and exit propagation
+        shell: pwsh
+        run: |
+          $probe=Join-Path $env:RUNNER_TEMP 'probe.ps1'
+          'Write-Output "Ordinary user process reached"; exit 0' | Set-Content $probe
+          ./scripts/run-desktop-unprivileged.ps1 -Script $probe -OutputDirectory "$env:RUNNER_TEMP/probe-success"
+          'Write-Output "Intentional failing probe"; exit 37' | Set-Content $probe
+          try {
+            ./scripts/run-desktop-unprivileged.ps1 -Script $probe -OutputDirectory "$env:RUNNER_TEMP/probe-failure"
+            throw 'Expected child failure was swallowed'
+          } catch {
+            if($_.Exception.Message -notmatch 'exit code 37'){throw}
+          }
