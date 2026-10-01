@@ -40,5 +40,5 @@ tauri-plugin-single-instance = {version = "=2.5.2",optional = true}
 tauri-build = {version = "=2.7.1", optional = true, features = [] }
 
 [dev-dependencies]
-minisign-verify = "=0.2.5"
+minisign-verify = "=0.3.0"
 base64 = "0.22"
