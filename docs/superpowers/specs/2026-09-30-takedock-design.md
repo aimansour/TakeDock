@@ -284,3 +284,27 @@ cannot replace a newer release's updater metadata.
 - [Svelte frontend investigation](../../research/2026-09-30-frontend-comparison.md)
 - [Tauri WebDriver testing](https://v2.tauri.app/develop/tests/webdriver/)
 - [Tauri WebDriver CI](https://v2.tauri.app/develop/tests/webdriver/ci/)
+# Accepted desktop refinements (2026-10-01)
+
+The user manually installed and accepted the baseline screen-reader controls,
+recording commands and file transfer. They now request multiple named windows
+within one application process. Reopening the desktop shortcut activates the
+most recently focused window; Ctrl+Shift+N and a Settings button create another.
+Names belong to the individual window and last until it closes. All windows
+share the one phone engine, file queue, destination and persisted settings.
+Settings changes propagate to every window. Result sounds occur once per
+backend result, irrespective of window count. Startup update checking happens
+once per application process; manual checks remain available in Settings.
+
+An empty destination migrates to the Windows Videos/TakeDock directory, created
+automatically. A user's existing selected directory is preserved. Videos are
+ordered newest first, using the source modification time, with stable name
+ordering for ties. Their duration is read from the finalized MP4 movie timeline
+or WebM Info timeline, respecting the time scale and rounding to milliseconds.
+Missing or invalid metadata is shown as unavailable, never estimated from size.
+
+Every window exposes ordinary activity text and a natively labelled progress
+element covering listing and file phases, including verification and completion.
+It never uses live regions or changes focus automatically. File processing and
+its progress remain independent of recording dispatch and Observer verification.
+The user's manual testing owns further physical desktop/phone interaction.
