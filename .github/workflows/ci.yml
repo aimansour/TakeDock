@@ -103,8 +103,7 @@ jobs:
       - name: Four mandatory real release Desktop E2E cases
         run: |
           ./scripts/setup-desktop-drivers.ps1
-          npm run test:desktop
-          if($LASTEXITCODE -ne 0){throw 'Desktop E2E failed'}
+          ./scripts/run-desktop-unprivileged.ps1 -Script ./scripts/test-desktop.ps1
       - name: Package tested binary without changing it
         if: inputs.signed == true
         env:
