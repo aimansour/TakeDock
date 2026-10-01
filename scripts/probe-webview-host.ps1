@@ -20,12 +20,31 @@ class Probe {
  [System.Runtime.InteropServices.DllImport("kernel32.dll",CharSet=System.Runtime.InteropServices.CharSet.Unicode,SetLastError=true)] static extern IntPtr CreateMutex(IntPtr attributes,bool owner,string name);
  [System.Runtime.InteropServices.DllImport("kernel32.dll")] static extern bool CloseHandle(IntPtr handle);
  [System.Runtime.InteropServices.DllImport("kernel32.dll",CharSet=System.Runtime.InteropServices.CharSet.Unicode,SetLastError=true)] static extern IntPtr OpenMutex(uint access,bool inherit,string name);
+ [System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential)] struct UNICODE_STRING {public ushort length,maximum;public IntPtr buffer;}
+ [System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential)] struct OBJECT_ATTRIBUTES {public int length;public IntPtr root,name;public uint attributes;public IntPtr descriptor,quality;}
+ [System.Runtime.InteropServices.DllImport("ntdll.dll")] static extern int NtOpenDirectoryObject(out IntPtr handle,uint access,ref OBJECT_ATTRIBUTES attributes);
  [STAThread] static int Main() {
   Console.WriteLine("Identity="+System.Security.Principal.WindowsIdentity.GetCurrent().Name);
   Console.WriteLine("UserSID="+System.Security.Principal.WindowsIdentity.GetCurrent().User.Value);
   Console.WriteLine("Session="+Process.GetCurrentProcess().SessionId);
   Console.WriteLine("LocalAppData="+Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData));
   Console.WriteLine("UserFolderOverride="+Environment.GetEnvironmentVariable("WEBVIEW2_USER_DATA_FOLDER"));
+  var path="\\Sessions\\"+Process.GetCurrentProcess().SessionId+"\\BaseNamedObjects";
+  var text=System.Runtime.InteropServices.Marshal.StringToHGlobalUni(path);var pointer=System.Runtime.InteropServices.Marshal.AllocHGlobal(System.Runtime.InteropServices.Marshal.SizeOf<UNICODE_STRING>());
+  try {
+   System.Runtime.InteropServices.Marshal.StructureToPtr(new UNICODE_STRING {length=(ushort)(path.Length*2),maximum=(ushort)((path.Length+1)*2),buffer=text},pointer,false);
+   var attributes=new OBJECT_ATTRIBUTES {length=System.Runtime.InteropServices.Marshal.SizeOf<OBJECT_ATTRIBUTES>(),name=pointer,attributes=0x40};
+   foreach(uint access in new uint[]{7,0x000f000f}) {
+    var status=NtOpenDirectoryObject(out var handle,access,ref attributes);
+    Console.WriteLine("DirectoryAccess="+access.ToString("x")+"; status="+status.ToString("x8"));
+    if(handle!=IntPtr.Zero)CloseHandle(handle);
+   }
+  } finally {System.Runtime.InteropServices.Marshal.FreeHGlobal(pointer);System.Runtime.InteropServices.Marshal.FreeHGlobal(text);}
+  foreach(var prefix in new[]{"","Local\\","Global\\"}) {
+   var test=CreateMutex(IntPtr.Zero,false,prefix+"TakeDock-probe-"+Guid.NewGuid());
+   Console.WriteLine("MutexNamespace="+prefix+"; error="+(test==IntPtr.Zero?System.Runtime.InteropServices.Marshal.GetLastWin32Error():0));
+   if(test!=IntPtr.Zero)CloseHandle(test);
+  }
   var unique=CreateMutex(IntPtr.Zero,false,"Local\\TakeDock-probe-"+Guid.NewGuid());
   Console.WriteLine("UniqueLocalMutexWin32Error="+(unique==IntPtr.Zero?System.Runtime.InteropServices.Marshal.GetLastWin32Error():0));
   if(unique!=IntPtr.Zero)CloseHandle(unique);

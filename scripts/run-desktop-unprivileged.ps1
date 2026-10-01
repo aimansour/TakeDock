@@ -105,7 +105,7 @@ public static class TakeDockLimitedProcess {
  static void GrantSessionObjectAccess(IntPtr handle,string userSid) {
   var security=new System.Security.AccessControl.RawSecurityDescriptor(ReadKernelSecurity(handle,4),0);
   if(security.DiscretionaryAcl==null)return;
-  security.DiscretionaryAcl.InsertAce(security.DiscretionaryAcl.Count,new System.Security.AccessControl.CommonAce(System.Security.AccessControl.AceFlags.None,System.Security.AccessControl.AceQualifier.AccessAllowed,7,new System.Security.Principal.SecurityIdentifier(userSid),false,null));
+  security.DiscretionaryAcl.InsertAce(security.DiscretionaryAcl.Count,new System.Security.AccessControl.CommonAce(System.Security.AccessControl.AceFlags.None,System.Security.AccessControl.AceQualifier.AccessAllowed,0x000f000f,new System.Security.Principal.SecurityIdentifier(userSid),false,null));
   var modified=new byte[security.BinaryLength];security.GetBinaryForm(modified,0);
   if(!SetKernelObjectSecurity(handle,4,modified))throw new Win32Exception();
  }
@@ -132,6 +132,7 @@ public static class TakeDockLimitedProcess {
    objectDirectory=OpenSessionObjectDirectory();
    objectAcl=ReadKernelSecurity(objectDirectory,4);
    GrantSessionObjectAccess(objectDirectory,userSid);
+   Console.WriteLine("HostedObjectDirectory="+KernelSecurityText(objectDirectory));
    // Chromium serializes startup across profiles in the session. A mutex
    // created by runneradmin denies a different ordinary user's CreateMutex.
    // Never acquire it or change ownership; restore its exact DACL on exit.
