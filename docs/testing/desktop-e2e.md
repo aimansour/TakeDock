@@ -61,6 +61,13 @@ to that mutex's DACL and makes its mandatory label Medium for ordinary Chromium.
 It restores the exact original DACL/label and never acquires it or
 changes its ownership. This hosted-only setup is tested with a standalone
 official WebView2 control before relying on the actual application suite.
+The account also receives temporary access to its hosted session's
+`BaseNamedObjects` directory. Native probes confirmed that a writable profile
+and mutex DACL alone cannot grant Win32 namespace initialization: unique local
+mutexes also failed with error 5. Granting the ordinary account the directory
+rights required by Win32 made local/global mutex creation and native WebView2
+startup succeed. The exact original directory DACL is restored in `finally`;
+the directory's existing integrity label is preserved.
 Private noninteractive stations failed native WebView2 ProcessSingleton startup.
 This follows [Windows interactive-client access](https://learn.microsoft.com/en-us/windows/win32/secauthz/processes-in-the-client-security-context).
 No local accounts or desktop ACL changes occur on the developer's computer.

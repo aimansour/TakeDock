@@ -74,7 +74,11 @@ class Probe {
    finally {timer.Stop();form.Close();}
   };
   Application.Run(form);
-  var log=Path.Combine(directory,"webview.log");if(File.Exists(log))Console.WriteLine(File.ReadAllText(log));
+  var log=Path.Combine(directory,"webview.log");
+  if(File.Exists(log)) {
+   try {using(var stream=new FileStream(log,FileMode.Open,FileAccess.Read,FileShare.ReadWrite|FileShare.Delete))using(var reader=new StreamReader(stream))Console.WriteLine(reader.ReadToEnd());}
+   catch(IOException failure) {Console.WriteLine("Diagnostic log read: "+failure.Message);}
+  }
   return result;
  }
 }
