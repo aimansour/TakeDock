@@ -5,7 +5,7 @@ $probeRoot=Join-Path $env:RUNNER_TEMP 'webview-host-probe'
 New-Item -ItemType Directory -Path $probeRoot -Force|Out-Null
 @'
 <Project Sdk="Microsoft.NET.Sdk">
-  <PropertyGroup><OutputType>Exe</OutputType><TargetFramework>net8.0-windows</TargetFramework><UseWindowsForms>true</UseWindowsForms><PlatformTarget>x64</PlatformTarget></PropertyGroup>
+  <PropertyGroup><OutputType>Exe</OutputType><TargetFramework>net10.0-windows10.0.17763.0</TargetFramework><UseWindowsForms>true</UseWindowsForms><PlatformTarget>x64</PlatformTarget></PropertyGroup>
   <ItemGroup><PackageReference Include="Microsoft.Web.WebView2" Version="1.0.4258.31" /></ItemGroup>
 </Project>
 '@|Set-Content (Join-Path $probeRoot 'Probe.csproj')
@@ -48,5 +48,23 @@ class Probe {
 & dotnet build (Join-Path $probeRoot 'Probe.csproj') --configuration Release --nologo
 if($LASTEXITCODE -ne 0){throw 'WebView host diagnostic build failed'}
 $script=Join-Path $probeRoot 'run.ps1'
-"& '$($probeRoot.Replace("'","''"))/bin/Release/net8.0-windows/Probe.exe'; exit `$LASTEXITCODE"|Set-Content $script
-& "$PSScriptRoot/run-desktop-unprivileged.ps1" -Script $script -OutputDirectory $probeRoot
+"& whoami /groups /fo csv; & '$($probeRoot.Replace("'","''"))/bin/Release/net10.0-windows10.0.17763.0/Probe.exe'; exit `$LASTEXITCODE"|Set-Content $script
+$archive=Join-Path $probeRoot 'ProcessMonitor.zip'
+Invoke-WebRequest 'https://download.sysinternals.com/files/ProcessMonitor.zip' -OutFile $archive
+if((Get-FileHash $archive).Hash -ne '80A6442B46AF762ED1432F6FEC3F7E20366BED62A2522B3486503398A40A1128'){throw 'Diagnostic download checksum changed'}
+Expand-Archive -LiteralPath $archive -DestinationPath (Join-Path $probeRoot 'tools')
+$monitor=Join-Path $probeRoot 'tools/Procmon64.exe'
+$signature=Get-AuthenticodeSignature $monitor
+if($signature.Status -ne 'Valid' -or $signature.SignerCertificate.Subject -notmatch '^CN=Microsoft Corporation,'){throw 'Invalid Microsoft diagnostic signature'}
+$trace=Join-Path $probeRoot 'trace.pml'
+$csv=Join-Path $probeRoot 'trace.csv'
+Start-Process -FilePath $monitor -ArgumentList @('/AcceptEula','/Quiet','/Minimized','/BackingFile',('"'+$trace+'"')) -WindowStyle Hidden|Out-Null
+& $monitor /WaitForIdle
+try {& "$PSScriptRoot/run-desktop-unprivileged.ps1" -Script $script -OutputDirectory $probeRoot}
+finally {
+ & $monitor /Terminate
+ Start-Process -FilePath $monitor -ArgumentList @('/Quiet','/OpenLog',('"'+$trace+'"'),'/SaveAs',('"'+$csv+'"')) -WindowStyle Hidden -Wait
+ if(Test-Path $csv) {
+  Import-Csv -LiteralPath $csv | Where-Object {$_.'Process Name' -in @('Probe.exe','msedgewebview2.exe') -and ($_.Result -eq 'ACCESS DENIED' -or $_.Path -match 'lockfile' -or $_.Operation -in @('Process Start','Process Create'))} | Select-Object -Last 60 | ConvertTo-Json -Depth 4
+ }
+}
