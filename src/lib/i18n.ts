@@ -1,4 +1,29 @@
 const en = {
+  duration: 'Duration',
+  durationUnavailable: 'Duration unavailable',
+  hours: 'hours',
+  minutes: 'minutes',
+  seconds: 'seconds',
+  milliseconds: 'milliseconds',
+  destination_setup_failed:
+    'The default destination could not be created. Choose a folder in Settings.',
+  settings_save_failed: 'Settings could not be saved.',
+  activity: 'Activity',
+  activityProgress: 'Activity progress',
+  copying: 'Copying video',
+  verifying: 'Verifying copied video',
+  deleting: 'Deleting video',
+  renaming: 'Renaming video',
+  preparing: 'Preparing operation',
+  loadingVideos: 'Loading videos',
+  windowName: 'Window name',
+  renameWindow: 'Save window name',
+  newWindow: 'New window',
+  window_renamed: 'Window name saved',
+  windowHelp:
+    'Ctrl+Shift+N opens another window. Phone, destination and settings are shared.',
+  invalid_window_name:
+    'Enter a window name of 1 to 80 characters without control characters.',
   updates: 'Updates',
   updateHelp:
     'Checks run automatically at startup. Installation starts only when you choose Install update. Installation closes TakeDock and cancels pending operations.',
@@ -106,6 +131,30 @@ const en = {
   adb_not_found: 'ADB was not found. Set its executable path in Settings.',
 } as const;
 const ar: Record<keyof typeof en, string> = {
+  duration: 'المدة',
+  durationUnavailable: 'المدة غير متاحة',
+  hours: 'ساعة',
+  minutes: 'دقيقة',
+  seconds: 'ثانية',
+  milliseconds: 'مللي ثانية',
+  destination_setup_failed:
+    'تعذر إنشاء مجلد الحفظ الافتراضي. اختر مجلدًا من الإعدادات.',
+  settings_save_failed: 'تعذر حفظ الإعدادات.',
+  activity: 'نشاط البرنامج',
+  activityProgress: 'تقدم العملية',
+  copying: 'جارٍ نسخ الفيديو',
+  verifying: 'جارٍ التحقق من الفيديو المنسوخ',
+  deleting: 'جارٍ حذف الفيديو',
+  renaming: 'جارٍ تغيير اسم الفيديو',
+  preparing: 'جارٍ تجهيز العملية',
+  loadingVideos: 'جارٍ تحميل قائمة الفيديوهات',
+  windowName: 'اسم النافذة',
+  renameWindow: 'حفظ اسم النافذة',
+  newWindow: 'نافذة جديدة',
+  window_renamed: 'تم حفظ اسم النافذة',
+  windowHelp:
+    'يفتح Ctrl+Shift+N نافذة أخرى. الهاتف ومجلد الحفظ والإعدادات مشتركة.',
+  invalid_window_name: 'أدخل اسمًا للنافذة من حرف إلى 80 حرفًا دون محارف تحكم.',
   updates: 'التحديثات',
   updateHelp:
     'يُفحص التحديث تلقائيًا عند التشغيل. يبدأ التثبيت فقط عند اختيار تثبيت التحديث. التثبيت يغلق TakeDock ويلغي العمليات المعلقة.',

@@ -58,3 +58,21 @@ it('keeps unfinished videos discoverable without an actionable checkbox', () => 
   expect(screen.getByText('one.mp4')).toBeInTheDocument();
   expect(screen.queryByRole('checkbox')).toBeNull();
 });
+it('exposes precise container duration as ordinary table text', () => {
+  const { container } = render(VideosPanel, {
+    videos: [
+      { ...videos[0], duration_ms: 123514 },
+      { ...videos[1], duration_ms: null },
+    ],
+    onJob: vi.fn(),
+    onRefresh: vi.fn(),
+  });
+  expect(
+    screen.getByRole('columnheader', { name: 'Duration' }),
+  ).toBeInTheDocument();
+  expect(
+    screen.getByText('2 minutes, 3 seconds, 514 milliseconds'),
+  ).toBeInTheDocument();
+  expect(screen.getByText('Duration unavailable')).toBeInTheDocument();
+  expect(container.querySelector('[aria-live], [role="status"]')).toBeNull();
+});

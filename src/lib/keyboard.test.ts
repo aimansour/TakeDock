@@ -1,5 +1,17 @@
 import { it, expect } from 'vitest';
 import { shortcut } from './keyboard';
+it('opens another window with Ctrl Shift N on an Arabic keyboard', () => {
+  expect(
+    shortcut(
+      new KeyboardEvent('keydown', {
+        key: 'ى',
+        code: 'KeyN',
+        ctrlKey: true,
+        shiftKey: true,
+      }),
+    ),
+  ).toBe('newWindow');
+});
 it('ignores repeated keys, composing, and typing contexts', () => {
   const event = new KeyboardEvent('keydown', {
     key: 'r',
@@ -33,5 +45,14 @@ it('ignores repeated keys, composing, and typing contexts', () => {
   input.addEventListener('keydown', (event) => (result = shortcut(event)));
   input.dispatchEvent(event);
   expect(result).toBeNull();
+  input.dispatchEvent(
+    new KeyboardEvent('keydown', {
+      key: 'n',
+      code: 'KeyN',
+      ctrlKey: true,
+      shiftKey: true,
+    }),
+  );
+  expect(result).toBe('newWindow');
   input.remove();
 });

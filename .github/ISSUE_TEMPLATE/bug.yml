@@ -1,0 +1,15 @@
+name: Bug report
+description: Report a reproducible TakeDock problem without private phone data.
+body:
+  - type: input
+    id: version
+    attributes: {label: TakeDock version, placeholder: '0.1.0'}
+    validations: {required: true}
+  - type: textarea
+    id: environment
+    attributes: {label: Environment, description: 'Windows, Android, Open Camera, screen reader and ADB versions. Omit device IDs and network addresses.'}
+    validations: {required: true}
+  - type: textarea
+    id: reproduction
+    attributes: {label: Reproduction, description: 'Steps, expected/actual behavior and ordinary result text. Use synthetic filenames; never attach personal videos or credentials.'}
+    validations: {required: true}

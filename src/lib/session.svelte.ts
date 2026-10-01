@@ -14,6 +14,7 @@ export function createSession() {
   const data = $state({
     session: { ...initialSession },
     settings: { ...defaultSettings },
+    windowName: '',
     videos: [] as Video[],
     jobs: [] as JobEvent[],
     result: '',
@@ -29,6 +30,7 @@ export function createSession() {
   });
   let destroyed = false;
   let refreshSerial = 0;
+  let settingsRevision = 0;
   let flush: ReturnType<typeof setTimeout> | undefined;
   let unlisten: (() => void)[] = [];
   const progress = new Map<string, JobEvent>();
@@ -60,18 +62,32 @@ export function createSession() {
   function applyJob(event: JobEvent) {
     if (event.generation !== data.session.generation) return;
     const index = data.jobs.findIndex((job) => job.id === event.id);
+    if (index >= 0) {
+      const previous = data.jobs[index].status;
+      if (
+        (event.status === 'queued' && previous !== 'queued') ||
+        (['completed', 'failed', 'cancelled'].includes(previous) &&
+          ['queued', 'running'].includes(event.status))
+      )
+        return;
+    }
     if (index >= 0) data.jobs[index] = event;
     else data.jobs = [event, ...data.jobs].slice(0, 20);
     if (['completed', 'failed', 'cancelled'].includes(event.status)) {
       progress.delete(event.id);
       data.result = event.status === 'completed' ? 'completed' : event.message;
-      if (event.status !== 'cancelled') sound(event.status === 'completed');
       void refresh();
     }
   }
   async function initialize() {
     try {
       const outcomes = await Promise.allSettled([
+        ipc.listen<Settings>('settings-changed', (settings) => {
+          if (!destroyed) {
+            settingsRevision++;
+            data.settings = settings;
+          }
+        }),
         ipc.listen<{ bytes: number; total: number }>(
           'update-progress',
           (value) => {
@@ -93,17 +109,14 @@ export function createSession() {
             value.status === 'superseded'
           )
             return;
-          if (value.status === 'confirmed') {
-            sound(true);
-          } else {
-            fail(value.message || 'verification_unconfirmed');
-          }
+          if (value.status !== 'confirmed')
+            data.result = value.message || 'verification_unconfirmed';
         }),
         ipc.listen<{ generation: number; code: string }>(
           'operation-error',
           (value) => {
             if (!destroyed && value.generation === data.session.generation)
-              fail(value.code);
+              data.result = value.code;
           },
         ),
         ipc.listen<JobEvent>('file-job', (event) => {
@@ -144,12 +157,23 @@ export function createSession() {
         unlisten = [];
         throw rejected.reason;
       }
+      const revision = settingsRevision;
       const initial = await ipc.bootstrap();
       if (destroyed) return;
-      data.settings = initial.settings;
+      if (settingsRevision === revision) data.settings = initial.settings;
+      data.windowName = initial.window_name;
       controller.reconcile(initial.session);
+      const existing = new Set(data.jobs.map((job) => job.id));
+      data.jobs = [
+        ...data.jobs,
+        ...initial.jobs.filter(
+          (job) =>
+            !existing.has(job.id) &&
+            job.generation === initial.session.generation,
+        ),
+      ].slice(0, 20);
       if (initial.errors.length) data.result = initial.errors.join('\n');
-      void updater.checkForUpdate('startup');
+      if (initial.check_at_startup) void updater.checkForUpdate('startup');
     } catch (error) {
       if (!destroyed) fail(String(error));
     }
@@ -206,6 +230,18 @@ export function createSession() {
     activate,
     fail,
     dispose,
+    newWindow: () => {
+      void ipc.newWindow().catch((error) => fail(String(error)));
+    },
+    renameWindow: (name: string) => {
+      void ipc
+        .renameWindow(name)
+        .then((value) => {
+          data.windowName = value;
+          data.result = 'window_renamed';
+        })
+        .catch((error) => fail(String(error)));
+    },
     checkUpdates: () => {
       void updater.checkForUpdate('manual');
     },

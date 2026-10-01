@@ -30,6 +30,7 @@ export interface Video {
   modified_ms: number;
   ready: boolean;
   identity: string;
+  duration_ms?: number | null;
 }
 export type JobKind = 'copy' | 'move' | 'delete' | 'rename';
 export interface JobEvent {
@@ -37,6 +38,7 @@ export interface JobEvent {
   generation: number;
   kind: JobKind;
   status: string;
+  phase?: string;
   name: string;
   bytes: number;
   total: number;

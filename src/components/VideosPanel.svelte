@@ -3,6 +3,7 @@
   import { tick } from 'svelte';
   import { t } from '../lib/i18n';
   import { videoKey } from '../lib/videos';
+  import { duration } from '../lib/duration';
   let {
     videos = [],
     onJob,
@@ -151,7 +152,9 @@
               >{t(language, 'name')}</th
             ><th scope="col">{t(language, 'size')}</th><th scope="col"
               >{t(language, 'modified')}</th
-            ><th scope="col">{t(language, 'state')}</th></tr
+            ><th scope="col">{t(language, 'duration')}</th><th scope="col"
+              >{t(language, 'state')}</th
+            ></tr
           ></thead
         ><tbody>
           {#each videos as video (videoKey(video))}<tr
@@ -170,7 +173,8 @@
                   maximumFractionDigits: 1,
                 })} MB</td
               ><td>{new Date(video.modified_ms).toLocaleString(language)}</td
-              ><td>{t(language, video.ready ? 'complete' : 'protected')}</td
+              ><td>{duration(video.duration_ms, language)}</td><td
+                >{t(language, video.ready ? 'complete' : 'protected')}</td
               ></tr
             >{/each}
         </tbody>

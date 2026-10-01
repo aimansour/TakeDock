@@ -97,7 +97,7 @@ try {
 } catch {`$_ | Out-String | Add-Content -LiteralPath '$escapedLog'; exit 1}
 "@ | Set-Content -LiteralPath $child
 $pwsh=(Get-Command pwsh).Source
-if($env:GITHUB_ACTIONS -eq 'true') {
+if($env:GITHUB_ACTIONS -eq 'true' -and $env:RUNNER_ENVIRONMENT -eq 'github-hosted') {
     $account='tdtest'+([guid]::NewGuid().ToString('N').Substring(0,10))
     $password=[Convert]::ToBase64String([Security.Cryptography.RandomNumberGenerator]::GetBytes(32))+'aA1!'
     $created=$false
@@ -114,6 +114,8 @@ if($env:GITHUB_ACTIONS -eq 'true') {
             & cargo build --locked -p takedock-adb-fixture
             if($LASTEXITCODE -ne 0){throw 'External fixture build failed'}
             $env:TAKEDOCK_PREBUILT_FIXTURE_DIR=$metadata.target_directory
+            $env:TAKEDOCK_ACCEPTANCE_COMMIT=(& git rev-parse HEAD)
+            if($LASTEXITCODE -ne 0){throw 'Acceptance commit lookup failed'}
             $workspaceAcl=Get-Acl -LiteralPath (Get-Location).Path
             $workspaceAcl.AddAccessRule([Security.AccessControl.FileSystemAccessRule]::new($user.SID,'Modify','ContainerInherit,ObjectInherit','None','Allow'))
             Set-Acl -LiteralPath (Get-Location).Path -AclObject $workspaceAcl

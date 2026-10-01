@@ -2,6 +2,15 @@ use crate::model::Settings;
 use std::io::Write;
 use std::path::Path;
 
+pub fn ensure_destination(settings: &mut Settings, videos: &Path) -> Result<(), String> {
+    if settings.destination.is_empty() {
+        let directory = videos.join("TakeDock");
+        std::fs::create_dir_all(&directory).map_err(|error| error.to_string())?;
+        settings.destination = directory.to_str().ok_or("destination_encoding")?.into();
+    }
+    Ok(())
+}
+
 fn validate(settings: &Settings) -> Result<(), String> {
     if !["en", "ar"].contains(&settings.language.as_str())
         || !(2000..=120_000).contains(&settings.verification_ms)
@@ -47,6 +56,24 @@ pub fn save(path: &Path, settings: &Settings) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn default_destination_is_created_and_custom_directory_is_preserved() {
+        let directory = tempfile::tempdir().unwrap();
+        let videos = directory.path().join("Videos");
+        let mut settings = Settings::default();
+        ensure_destination(&mut settings, &videos).unwrap();
+        assert_eq!(Path::new(&settings.destination), videos.join("TakeDock"));
+        assert!(Path::new(&settings.destination).is_dir());
+        settings.destination = directory
+            .path()
+            .join("User choice")
+            .to_string_lossy()
+            .into();
+        let original = settings.destination.clone();
+        ensure_destination(&mut settings, &videos).unwrap();
+        assert_eq!(settings.destination, original);
+        assert!(!Path::new(&original).exists());
+    }
     #[test]
     fn defaults_are_silent_and_survive_restart_after_edit() {
         let directory = tempfile::tempdir().unwrap();

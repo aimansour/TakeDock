@@ -3,3 +3,5 @@
 *.png binary
 *.ico binary
 *.jar binary
+# Preserve upstream license formatting in generated distribution notices.
+third-party/licenses.txt -whitespace

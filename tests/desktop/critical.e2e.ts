@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { unlinkSync } from 'node:fs';
+import { spawn } from 'node:child_process';
 import { browser, $, $$ } from '@wdio/globals';
 import {
   restartFixture,
@@ -20,7 +21,9 @@ import {
 describe('TakeDock release desktop acceptance', () => {
   it('launches offline with named keyboard controls and silent success defaults', async () => {
     await $('h1').waitForExist();
-    assert.equal(await $('h1').getText(), 'TakeDock');
+    await waitFor(
+      async () => (await $('h1').getText()) === 'TakeDock — Window 1',
+    );
     assert.equal(await button('Start video').isExisting(), false);
     await shortcut('s');
     await $('#language').waitForExist();
@@ -36,6 +39,44 @@ describe('TakeDock release desktop acceptance', () => {
       0,
     );
     assert.equal(await button('Install update').isExisting(), false);
+    const first = await browser.getWindowHandle();
+    await $('#window-name').setValue('Interview');
+    await button('Save window name').click();
+    await waitFor(
+      async () => (await browser.getTitle()) === 'TakeDock — Interview',
+    );
+    await shortcut('n');
+    await waitFor(async () => (await browser.getWindowHandles()).length === 2);
+    const second = (await browser.getWindowHandles()).find(
+      (handle) => handle !== first,
+    )!;
+    await browser.switchToWindow(second);
+    await waitFor(async () => (await $('h1').getText()).includes('Window 2'));
+    await shortcut('s');
+    await $('#language').waitForExist();
+    await $('#language').selectByAttribute('value', 'ar');
+    await button('Save settings').click();
+    await browser.switchToWindow(first);
+    await waitFor(async () => (await $('html').getAttribute('dir')) === 'rtl');
+    assert.equal(await $('#language').getValue(), 'ar');
+    assert.equal(await $('#window-name').getValue(), 'Interview');
+    await $('#language').selectByAttribute('value', 'en');
+    await button('حفظ الإعدادات').click();
+    await waitFor(async () => (await $('html').getAttribute('dir')) === 'ltr');
+    const launched = spawn(process.env.TAKEDOCK_APP_EXE!, [], {
+      windowsHide: true,
+      stdio: 'ignore',
+      signal: AbortSignal.timeout(15000),
+    });
+    const exit = await new Promise<number | null>((resolve, reject) => {
+      launched.once('error', reject);
+      launched.once('exit', resolve);
+    });
+    assert.equal(exit, 0);
+    assert.equal((await browser.getWindowHandles()).length, 2);
+    await browser.switchToWindow(second);
+    await browser.closeWindow();
+    await browser.switchToWindow(first);
   });
   it('dispatches all four actions while verification is held and retains logical focus', async () => {
     await restartFixture(true);
@@ -89,6 +130,7 @@ describe('TakeDock release desktop acceptance', () => {
       async () => (await $$('tbody input[type="checkbox"]')).length === 2,
     );
     const boxes = await $$('tbody input[type="checkbox"]');
+    assert.match(await $('tbody').getText(), /100 milliseconds/);
     await boxes[0].click();
     assert.equal(await button('Rename video').isExisting(), true);
     await boxes[1].click();
@@ -105,6 +147,7 @@ describe('TakeDock release desktop acceptance', () => {
         hash(join(fixtureRoot, 'videos', name)),
       );
     await waitFor(async () => (await $('main').getText()).includes('2/2'));
+    assert.equal(await $('#activity-progress').getAttribute('value'), '100');
     assert.equal(
       (await $$('[aria-live], [role="status"], [role="alert"]')).length,
       0,

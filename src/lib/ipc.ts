@@ -7,13 +7,21 @@ import type {
   Video,
   JobKind,
   CommandReceipt,
+  JobEvent,
 } from './types';
 import type { UpdateInfo } from './updater';
 export const ipc = {
   bootstrap: () =>
-    invoke<{ session: SessionState; settings: Settings; errors: string[] }>(
-      'bootstrap',
-    ),
+    invoke<{
+      session: SessionState;
+      settings: Settings;
+      errors: string[];
+      window_name: string;
+      jobs: JobEvent[];
+      check_at_startup: boolean;
+    }>('bootstrap'),
+  newWindow: () => invoke<void>('new_window'),
+  renameWindow: (name: string) => invoke<string>('rename_window', { name }),
   recording: (action: string, generation: number) =>
     invoke<CommandReceipt>('recording_action', { action, generation }),
   videos: (generation: number) =>

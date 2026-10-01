@@ -7,8 +7,11 @@ $originalSettings=$null
 $profilePrepared=$false
 try {
     if(Get-Process takedock -ErrorAction SilentlyContinue){throw 'Close TakeDock before running desktop acceptance.'}
-    $metadata=& cargo metadata --no-deps --format-version 1 | ConvertFrom-Json
-    if($LASTEXITCODE -ne 0){throw 'Cargo metadata failed'}
+    if($env:TAKEDOCK_PREBUILT_FIXTURE_DIR){$metadata=@{target_directory=[IO.Path]::GetFullPath($env:TAKEDOCK_PREBUILT_FIXTURE_DIR)}}
+    else {
+        $metadata=& cargo metadata --no-deps --format-version 1 | ConvertFrom-Json
+        if($LASTEXITCODE -ne 0){throw 'Cargo metadata failed'}
+    }
     if(-not $Executable){$Executable=Join-Path $metadata.target_directory 'release/takedock.exe'}
     if(-not $TauriDriver){$TauriDriver=(Get-Command tauri-driver -ErrorAction Stop).Source}
     if(-not $EdgeDriver){$EdgeDriver=(Get-Command msedgedriver -ErrorAction Stop).Source}
@@ -21,14 +24,18 @@ try {
     $resourceRoot=Split-Path $Executable -Parent
     $resources=@((Join-Path $resourceRoot 'observer.apk'))
     foreach($abi in @('arm64-v8a','x86_64','armeabi-v7a')){$resources+=Join-Path $resourceRoot "file-helper/$abi/takedock-files"}
+    foreach($notice in @('LICENSE','THIRD_PARTY_NOTICES.md','third-party/inventory.json','third-party/licenses.txt','third-party/supplemental.json','third-party/rust-standard-library.txt')){$resources+=Join-Path $resourceRoot $notice}
     foreach($resource in $resources){if(-not(Test-Path -LiteralPath $resource -PathType Leaf)){throw 'Bundled resource missing'}}
     $runtimeVersions=@(Get-Item 'C:/Program Files (x86)/Microsoft/EdgeWebView/Application/*/msedgewebview2.exe' -ErrorAction SilentlyContinue | ForEach-Object {$_.VersionInfo.ProductVersion})
     if($runtimeVersions.Count -eq 0){throw 'WebView2 runtime missing'}
     $runtimeVersion=$runtimeVersions|Sort-Object {[version]$_} -Descending | Select-Object -First 1
     $edgeVersion=(& $EdgeDriver --version | Select-Object -First 1) -replace '^.*?([0-9]+\.[0-9]+\.[0-9]+\.[0-9]+).*$','$1'
     if($edgeVersion -ne $runtimeVersion){throw "EdgeDriver $edgeVersion must match WebView2 $runtimeVersion"}
-    & cargo build --locked -p takedock-adb-fixture
-    if($LASTEXITCODE -ne 0){throw 'External ADB fixture build failed'}
+    if(-not $env:TAKEDOCK_PREBUILT_FIXTURE_DIR){
+        & cargo build --locked -p takedock-adb-fixture
+        if($LASTEXITCODE -ne 0){throw 'External ADB fixture build failed'}
+    }
+    if(-not(Test-Path -LiteralPath (Join-Path $metadata.target_directory 'debug/takedock-adb-fixture.exe') -PathType Leaf)){throw 'Built external ADB fixture missing'}
     $testBase=if($env:TAKEDOCK_TEST_TMP){$env:TAKEDOCK_TEST_TMP}else{[IO.Path]::GetTempPath()}
     $testRoot=Join-Path $testBase ('takedock-desktop-'+[guid]::NewGuid().ToString())
     New-Item -ItemType Directory -Path $testRoot -Force | Out-Null
@@ -50,7 +57,8 @@ try {
         if((Get-Date) -gt $deadline){throw 'Tauri driver did not become ready'}
         if(-not $ready){Start-Sleep -Milliseconds 100}
     }while(-not $ready)
-    $report=[ordered]@{commit=(& git rev-parse HEAD);os=[Environment]::OSVersion.Version.ToString();node=(& node --version);webview2=$runtimeVersion;edgeDriver=$edgeVersion;tauriDriver='2.1.0';resources=@(@($Executable)+$resources|ForEach-Object {@{name=[IO.Path]::GetRelativePath($resourceRoot,$_).Replace('\','/');sha256=(Get-FileHash -LiteralPath $_ -Algorithm SHA256).Hash}})}
+    $commit=if($env:TAKEDOCK_ACCEPTANCE_COMMIT){$env:TAKEDOCK_ACCEPTANCE_COMMIT}else{& git rev-parse HEAD}
+    $report=[ordered]@{commit=$commit;os=[Environment]::OSVersion.Version.ToString();node=(& node --version);webview2=$runtimeVersion;edgeDriver=$edgeVersion;tauriDriver='2.1.0';resources=@(@($Executable)+$resources|ForEach-Object {@{name=[IO.Path]::GetRelativePath($resourceRoot,$_).Replace('\','/');sha256=(Get-FileHash -LiteralPath $_ -Algorithm SHA256).Hash}})}
     $report|ConvertTo-Json -Depth 8|Set-Content -LiteralPath (Join-Path $testRoot 'preflight.json')
     & node node_modules/@wdio/cli/bin/wdio.js run tests/desktop/wdio.conf.ts
     if($LASTEXITCODE -ne 0){throw "Desktop E2E failed; fixture diagnostics: $testRoot"}

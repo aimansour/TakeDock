@@ -11,11 +11,10 @@ The checked-in public key is intentional. Keep the matching private key and
 password outside Git, backed up in a restricted location. Generate a key once
 with `npm exec tauri signer generate`; do not regenerate it between releases.
 Set `TAURI_SIGNING_PRIVATE_KEY` and `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` as
-GitHub Actions secrets. For local builds use `TAURI_SIGNING_PRIVATE_KEY_PATH`
-and `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` in the process environment. Never
-place a password in a committed script or command log. The pinned bundle CLI
-requires `TAURI_SIGNING_PRIVATE_KEY` containing the key itself; its standalone
-signer also supports the path variable. Tauri signing is update
+GitHub Actions secrets. For local bundling set the same two process environment
+variables, loading the key from restricted external storage. Never
+place a password in a committed script or command log. The standalone
+signer also supports `TAURI_SIGNING_PRIVATE_KEY_PATH`. Tauri signing is update
 integrity verification; it is independent of Windows Authenticode.
 
 Builds pin Node, Rust, Android tools and dependencies. The Observer uses its

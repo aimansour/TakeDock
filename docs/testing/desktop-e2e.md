@@ -39,6 +39,15 @@ selection, installer behavior or real-phone latency; those have separate
 packaged/device acceptance checks. The initial Windows 10 22H2 run passed all
 four flows with WebView2/EdgeDriver 154.0.4258.48 and Rust 1.98.1.
 
+GitHub-hosted Windows runners use a disposable ordinary account through the external
+`scripts/run-desktop-unprivileged.ps1`. The child asserts it is not an
+administrator and propagates any failure. WebView2 150+ ignores environment
+debugging arguments in elevated hosts, preventing normal session creation:
+[Microsoft issue](https://github.com/MicrosoftEdge/WebView2Feedback/issues/5645),
+[WebdriverIO investigation](https://github.com/webdriverio/desktop-mobile/issues/542).
+No product test hook, downgraded runtime, changed host policy or allow-failure
+condition is used. All four cases remain mandatory.
+
 ## Development dependency decisions
 
 The published `extract-zip` package has no patched release for

@@ -81,17 +81,23 @@ pub fn parse_listing(bytes: &[u8]) -> Result<Vec<Video>, String> {
         }) {
             continue;
         }
-        videos.push(Video {
-            name: name.into(),
-            size: entry.identity.size,
-            modified_ms: (entry.identity.modified_ns / 1_000_000)
-                .try_into()
-                .map_err(err)?,
-            ready: entry.ready,
-            identity: serde_json::to_string(&entry.identity).map_err(err)?,
-        });
+        let modified_ns = entry.identity.modified_ns;
+        videos.push((
+            modified_ns,
+            Video {
+                name: name.into(),
+                size: entry.identity.size,
+                modified_ms: (entry.identity.modified_ns / 1_000_000)
+                    .try_into()
+                    .map_err(err)?,
+                ready: entry.ready,
+                duration_ms: entry.duration_ms,
+                identity: serde_json::to_string(&entry.identity).map_err(err)?,
+            },
+        ));
     }
-    Ok(videos)
+    videos.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| a.1.name.cmp(&b.1.name)));
+    Ok(videos.into_iter().map(|(_, video)| video).collect())
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Video {
@@ -99,6 +105,8 @@ pub struct Video {
     pub size: u64,
     pub modified_ms: u64,
     pub ready: bool,
+    #[serde(default)]
+    pub duration_ms: Option<u64>,
     pub identity: String,
 }
 fn err(error: impl std::fmt::Display) -> String {
@@ -119,6 +127,7 @@ pub struct JobEvent {
     pub generation: u64,
     pub kind: JobKind,
     pub status: String,
+    pub phase: String,
     pub name: String,
     pub bytes: u64,
     pub total: u64,
@@ -150,13 +159,16 @@ pub struct FileService {
     sender: SyncSender<Message>,
     jobs: Arc<Mutex<HashMap<String, Arc<AtomicBool>>>>,
     worker: Mutex<Option<thread::JoinHandle<()>>>,
+    sink: EventSink,
 }
 impl FileService {
     pub fn start(resources: PathBuf, sink: EventSink) -> Self {
         let (sender, receiver) = mpsc::sync_channel(16);
         let jobs = Arc::new(Mutex::new(HashMap::new()));
         let active = jobs.clone();
+        let worker_sink = sink.clone();
         let worker = thread::spawn(move || {
+            let sink = worker_sink;
             let mut remote = Remote {
                 resources,
                 deployed: 0,
@@ -204,6 +216,7 @@ impl FileService {
             sender,
             jobs,
             worker: Mutex::new(Some(worker)),
+            sink,
         }
     }
     pub fn list(&self, lease: DeviceLease) -> Result<Vec<Video>, String> {
@@ -259,6 +272,7 @@ impl FileService {
             generation: lease.generation,
             kind,
             status: "queued".into(),
+            phase: "preparing".into(),
             name: String::new(),
             bytes: 0,
             total: videos
@@ -271,6 +285,7 @@ impl FileService {
             results: Vec::new(),
         };
         self.jobs.lock().unwrap().insert(id.clone(), cancel.clone());
+        let queued = event.clone();
         if self
             .sender
             .try_send(Message::Job(Box::new(Job {
@@ -286,6 +301,7 @@ impl FileService {
             self.jobs.lock().unwrap().remove(&id);
             return Err("file_queue_full".into());
         }
+        emit(&self.sink, &queued);
         Ok(id)
     }
     pub fn cancel(&self, id: &str) -> Result<(), String> {
@@ -434,6 +450,14 @@ fn execute(remote: &Remote, job: &mut Job, sink: &EventSink) -> Result<(), Strin
         let result = (|| -> Result<(), String> {
             check(job)?;
             job.event.name = video.name.clone();
+            job.event.bytes = 0;
+            job.event.total = video.size;
+            job.event.phase = match job.event.kind {
+                JobKind::Copy | JobKind::Move => "copying",
+                JobKind::Delete => "deleting",
+                JobKind::Rename => "renaming",
+            }
+            .into();
             emit(sink, &job.event);
             remote.stat(&job.lease, &video)?;
             match job.event.kind {
@@ -455,6 +479,9 @@ fn execute(remote: &Remote, job: &mut Job, sink: &EventSink) -> Result<(), Strin
                         sink,
                     )?;
                     check(job)?;
+                    job.event.bytes = video.size;
+                    job.event.phase = "verifying".into();
+                    emit(sink, &job.event);
                     partial.as_file().sync_all().map_err(err)?;
                     if partial.as_file().metadata().map_err(err)?.len() != video.size {
                         return Err("copy_size_mismatch".into());
@@ -472,6 +499,8 @@ fn execute(remote: &Remote, job: &mut Job, sink: &EventSink) -> Result<(), Strin
                     check(job)?;
                     partial.persist_noclobber(&destination).map_err(err)?;
                     if job.event.kind == JobKind::Move {
+                        job.event.phase = "deleting".into();
+                        emit(sink, &job.event);
                         check(job)?;
                         remote.stat(&job.lease, &video)?;
                         remote.job_output(
@@ -708,6 +737,7 @@ mod tests {
                 changed_ns: 1_700_000_000_123_456_790,
             },
             ready: true,
+            duration_ms: Some(100),
         };
         let mut bytes = entry.name.as_bytes().to_vec();
         bytes.push(0);
@@ -720,4 +750,20 @@ mod tests {
         bytes.pop();
         assert!(parse_listing(&bytes).is_err());
     }
+}
+#[test]
+fn listing_is_newest_first_and_carries_exact_duration() {
+    let mut bytes = Vec::new();
+    for (name, modified, duration) in [
+        ("old.mp4", 100_000_001u128, Some(123_514u64)),
+        ("new.mp4", 100_000_099, Some(500)),
+    ] {
+        bytes.extend(name.as_bytes());
+        bytes.push(0);
+        bytes.extend(serde_json::to_vec(&serde_json::json!({"name":name,"identity":{"device":1,"inode":1,"size":20,"modified_ns":modified,"changed_ns":modified},"ready":true,"duration_ms":duration})).unwrap());
+        bytes.push(0);
+    }
+    let videos = parse_listing(&bytes).unwrap();
+    assert_eq!(videos[0].name, "new.mp4");
+    assert_eq!(videos[1].duration_ms, Some(123_514));
 }

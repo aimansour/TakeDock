@@ -21,6 +21,8 @@ pub struct Entry {
     pub name: String,
     pub identity: Identity,
     pub ready: bool,
+    #[serde(default)]
+    pub duration_ms: Option<u64>,
 }
 pub struct Root {
     path: PathBuf,
@@ -117,14 +119,28 @@ impl Root {
             }
             let metadata = entry.file_type().map_err(err)?;
             if metadata.is_file() {
+                let identity = self.stat(&name)?;
+                let duration_ms = self.video_duration(&name)?;
+                // Metadata and duration must describe the same unchanged file.
+                let duration_ms = if self.stat(&name)? == identity {
+                    duration_ms
+                } else {
+                    None
+                };
                 entries.push(Entry {
-                    identity: self.stat(&name)?,
-                    ready: self.video_ready(&name)?,
+                    identity,
+                    ready: duration_ms.is_some(),
+                    duration_ms,
                     name,
                 });
             }
         }
-        entries.sort_by(|a, b| a.name.cmp(&b.name));
+        entries.sort_by(|a, b| {
+            b.identity
+                .modified_ns
+                .cmp(&a.identity.modified_ns)
+                .then_with(|| a.name.cmp(&b.name))
+        });
         Ok(entries)
     }
     pub fn stat(&self, name: &str) -> Result<Identity, String> {
@@ -426,11 +442,18 @@ impl Root {
         Ok(handle)
     }
     pub fn video_ready(&self, name: &str) -> Result<bool, String> {
+        Ok(self.video_duration(name)?.is_some())
+    }
+    pub fn video_duration(&self, name: &str) -> Result<Option<u64>, String> {
         validate_name(name)?;
         let mut file = self.open_named(name)?;
         let before = identity(&file)?;
-        let ready = finalized::finalized(&mut file, before.size);
-        Ok(ready && identity(&file)? == before)
+        let duration = finalized::duration_ms(&mut file, before.size);
+        Ok(if identity(&file)? == before {
+            duration
+        } else {
+            None
+        })
     }
 }
 pub fn validate_name(name: &str) -> Result<(), String> {

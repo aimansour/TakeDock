@@ -4,6 +4,8 @@
   import VideosPanel from './components/VideosPanel.svelte';
   import SettingsPanel from './components/SettingsPanel.svelte';
   import UpdatePanel from './components/UpdatePanel.svelte';
+  import ActivityPanel from './components/ActivityPanel.svelte';
+  import WindowPanel from './components/WindowPanel.svelte';
   import { createSession } from './lib/session.svelte';
   import { ipc } from './lib/ipc';
   import { shortcut } from './lib/keyboard';
@@ -16,6 +18,9 @@
     return app.dispose;
   });
   $effect(() => {
+    document.title = data.windowName
+      ? `TakeDock — ${data.windowName}`
+      : 'TakeDock';
     document.documentElement.lang = data.settings.language;
     document.documentElement.dir =
       data.settings.language === 'ar' ? 'rtl' : 'ltr';
@@ -24,7 +29,8 @@
     const action = shortcut(event);
     if (!action) return;
     event.preventDefault();
-    if (action === 'record')
+    if (action === 'newWindow') app.newWindow();
+    else if (action === 'record')
       app.activate(data.session.predicted === 'idle' ? 'start' : 'stop');
     else if (action === 'pause')
       app.activate(data.session.predicted === 'paused' ? 'resume' : 'pause');
@@ -38,7 +44,7 @@
 <svelte:window onkeydown={keyboard} />
 <header class="app-header">
   <div>
-    <h1>TakeDock</h1>
+    <h1>TakeDock{data.windowName ? ` — ${data.windowName}` : ''}</h1>
     <p>
       {t(data.settings.language, 'connection')}: {t(
         data.settings.language,
@@ -86,7 +92,12 @@
       onAdb={ipc.adb}
       onReconnect={app.reconnect}
       onError={app.fail}
-      ><UpdatePanel
+      ><WindowPanel
+        name={data.windowName}
+        language={data.settings.language}
+        onRename={app.renameWindow}
+        onNew={app.newWindow}
+      /><UpdatePanel
         language={data.settings.language}
         update={data.update}
         onCheck={app.checkUpdates}
@@ -97,6 +108,11 @@
       <h2>{t(data.settings.language, 'result')}</h2>
       <p class="result-text">{t(data.settings.language, data.result)}</p>
     </section>{/if}
+  <ActivityPanel
+    jobs={data.jobs}
+    loading={data.loading}
+    language={data.settings.language}
+  />
   {#if data.jobs.length}<section class="panel">
       <h2>{t(data.settings.language, 'jobs')}</h2>
       {#each data.jobs as job (job.id)}<article class="job">
