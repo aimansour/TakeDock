@@ -7,7 +7,9 @@ if ($Configuration -eq 'Release' -and -not $env:OBSERVER_KEYSTORE) {
 $projectRoot = Split-Path $PSScriptRoot -Parent
 Push-Location (Join-Path $projectRoot 'observer')
 try {
-    & ./gradlew.bat "test${Configuration}UnitTest" "lint${Configuration}" "assemble${Configuration}"
+    $wrapper=if($IsWindows){'./gradlew.bat'}else{'./gradlew'}
+    # Current AGP enables JVM unit tests on Debug by default; the reader is variant-independent.
+    & $wrapper testDebugUnitTest "lint${Configuration}" "assemble${Configuration}"
     if ($LASTEXITCODE -ne 0) { throw 'Observer checks/build failed.' }
     $variant = $Configuration.ToLowerInvariant()
     $apk = Join-Path $PWD "app/build/outputs/apk/$variant/app-$variant.apk"

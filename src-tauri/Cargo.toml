@@ -39,3 +39,5 @@ tauri-plugin-updater = {version = "=2.13.1",optional = true}
 tauri-build = {version = "=2.7.1", optional = true, features = [] }
 
 [dev-dependencies]
+minisign-verify = "=0.2.5"
+base64 = "0.22"

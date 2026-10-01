@@ -13,12 +13,54 @@ with `npm exec tauri signer generate`; do not regenerate it between releases.
 Set `TAURI_SIGNING_PRIVATE_KEY` and `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` as
 GitHub Actions secrets. For local builds use `TAURI_SIGNING_PRIVATE_KEY_PATH`
 and `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` in the process environment. Never
-place a password in a committed script or command log. Tauri signing is update
+place a password in a committed script or command log. The pinned bundle CLI
+requires `TAURI_SIGNING_PRIVATE_KEY` containing the key itself; its standalone
+signer also supports the path variable. Tauri signing is update
 integrity verification; it is independent of Windows Authenticode.
 
 Builds pin Node, Rust, Android tools and dependencies. The Observer uses its
 own persistent Android signing key, also stored outside Git. CI secret and
-publication setup is documented with the release workflow.
+publication setup is documented below.
+
+## Required GitHub Actions secrets
+
+| Name | Value |
+| --- | --- |
+| `TAURI_SIGNING_PRIVATE_KEY` | Exact encrypted Tauri private key content |
+| `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` | Tauri private key password |
+| `OBSERVER_KEYSTORE_BASE64` | Base64 of the persistent Android PKCS12 keystore |
+| `OBSERVER_STORE_PASSWORD` | Android keystore password |
+| `OBSERVER_KEY_PASSWORD` | Password for alias `takedock-observer` |
+
+Keep both signing identities across releases. The public Android certificate
+SHA-256 fingerprint is `observer/signing-certificate.sha256`; release builds
+must match it. The JVM reader tests use Debug, where current AGP enables unit
+tests; release APKs separately run full release lint and signing verification.
+
+## Publication gate
+
+Pushes and pull requests run the same Rust, frontend, Observer and Windows
+Desktop E2E gates. The reusable workflow rejects failed, cancelled, skipped
+and missing jobs. GitHub Actions dependencies are pinned to verified commit
+SHAs, with Dependabot checking compatible updates.
+
+Dispatch **Release** manually for a signed validation-only candidate. This
+builds exactly the publishable installer/assets and never publishes. For an
+approved stable version, update package, Rust/Tauri and Observer versions and
+increment the Observer versionCode; push tag `vX.Y.Z`. Only a tag with all
+gates passing reaches publication. Tags must match the app metadata.
+
+The desktop suite tests the release EXE/resources before packaging. Bundling
+uses `--no-binary-patching` because TakeDock ships one Windows installer type;
+updater metadata uses the generic `windows-x86_64` platform. This preserves the
+tested EXE bytes. The package verifier extracts the actual NSIS installer with
+pinned, checksum-verified portable 7-Zip 26.03 and compares every bundled hash,
+verifies the updater signature/version and builds `SHA256SUMS.txt`/`latest.json`.
+
+Releases are serialized. Publication rechecks versions/checksums/acceptance,
+rejects stale versions, creates a draft and downloads all uploaded assets to
+verify their bytes before making it public/latest. A failed upload stays a
+draft. Installation remains a user's explicit Settings action.
 
 ## Verifying updater behavior without installation
 
