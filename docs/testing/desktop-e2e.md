@@ -53,6 +53,13 @@ condition is used. All four cases remain mandatory.
 The ordinary account is test-owned and removed on completion. Only on disposable
 GitHub-hosted VMs, the launcher adds this account's access to `WinSta0/Default`
 and restores the exact original desktop/window-station DACLs in `finally`.
+Chromium's session-wide `Local\ChromeProcessSingletonStartup!` mutex can already
+belong to `runneradmin`. The ordinary-account diagnostic reproduced an explicit
+access denial for that mutex and native WebView2 ProcessSingleton failure, even
+with a fresh writable profile. The launcher temporarily adds only this account
+to that mutex's DACL, restores its exact original DACL and never acquires it or
+changes its ownership. This hosted-only setup is tested with a standalone
+official WebView2 control before relying on the actual application suite.
 Private noninteractive stations failed native WebView2 ProcessSingleton startup.
 This follows [Windows interactive-client access](https://learn.microsoft.com/en-us/windows/win32/secauthz/processes-in-the-client-security-context).
 No local accounts or desktop ACL changes occur on the developer's computer.

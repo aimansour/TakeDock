@@ -30,6 +30,9 @@ public static class TakeDockLimitedProcess {
  [DllImport("advapi32.dll",CharSet=CharSet.Unicode,SetLastError=true)] static extern bool CreateProcessWithLogonW(string user,string domain,string password,uint logon,string app,System.Text.StringBuilder command,uint flags,IntPtr environment,string directory,ref STARTUPINFO startup,out PROCESS_INFORMATION info);
  [DllImport("kernel32.dll")] static extern IntPtr GetCurrentProcess();
  [DllImport("kernel32.dll",SetLastError=true)] static extern bool CloseHandle(IntPtr handle);
+ [DllImport("kernel32.dll",CharSet=CharSet.Unicode,SetLastError=true)] static extern IntPtr CreateMutex(IntPtr attributes,bool owner,string name);
+ [DllImport("advapi32.dll",SetLastError=true)] static extern bool GetKernelObjectSecurity(IntPtr handle,uint information,byte[] descriptor,uint length,out uint needed);
+ [DllImport("advapi32.dll",SetLastError=true)] static extern bool SetKernelObjectSecurity(IntPtr handle,uint information,byte[] descriptor);
  [DllImport("advapi32.dll",SetLastError=true)] static extern bool OpenProcessToken(IntPtr process,uint access,out IntPtr token);
  [DllImport("advapi32.dll",SetLastError=true)] static extern bool CreateRestrictedToken(IntPtr token,uint flags,uint disable,IntPtr sids,uint privileges,IntPtr deleted,uint restrict,IntPtr restricted,out IntPtr limited);
  [DllImport("advapi32.dll",CharSet=CharSet.Unicode,SetLastError=true)] static extern bool CreateProcessAsUser(IntPtr token,string app,System.Text.StringBuilder command,IntPtr processAttributes,IntPtr threadAttributes,bool inherit,uint flags,IntPtr environment,string directory,ref STARTUPINFO startup,out PROCESS_INFORMATION info);
@@ -48,8 +51,21 @@ public static class TakeDockLimitedProcess {
   if(!SetUserObjectSecurity(handle,ref information,modified))throw new Win32Exception();
   return original;
  }
+ static byte[] GrantChromiumStartupAccess(IntPtr handle,string userSid) {
+  uint needed;
+  GetKernelObjectSecurity(handle,4,null,0,out needed);
+  if(needed==0)throw new Win32Exception();
+  var original=new byte[needed];
+  if(!GetKernelObjectSecurity(handle,4,original,needed,out needed))throw new Win32Exception();
+  var security=new System.Security.AccessControl.RawSecurityDescriptor(original,0);
+  if(security.DiscretionaryAcl==null)return original;
+  security.DiscretionaryAcl.InsertAce(security.DiscretionaryAcl.Count,new System.Security.AccessControl.CommonAce(System.Security.AccessControl.AceFlags.None,System.Security.AccessControl.AceQualifier.AccessAllowed,0x001f0001,new System.Security.Principal.SecurityIdentifier(userSid),false,null));
+  var modified=new byte[security.BinaryLength];security.GetBinaryForm(modified,0);
+  if(!SetKernelObjectSecurity(handle,4,modified))throw new Win32Exception();
+  return original;
+ }
  public static int Run(string application,string command,string directory,string user,string password,string userSid,string profile,string temporary) {
-  IntPtr token=IntPtr.Zero,limited=IntPtr.Zero,station=IntPtr.Zero,desktop=IntPtr.Zero; byte[] stationAcl=null,desktopAcl=null; PROCESS_INFORMATION info=default;
+  IntPtr token=IntPtr.Zero,limited=IntPtr.Zero,station=IntPtr.Zero,desktop=IntPtr.Zero,startupMutex=IntPtr.Zero; byte[] stationAcl=null,desktopAcl=null,mutexAcl=null; PROCESS_INFORMATION info=default;
   try {
    if(!OpenProcessToken(GetCurrentProcess(),0x000F01FF,out token))throw new Win32Exception();
    if(!CreateRestrictedToken(token,4,0,IntPtr.Zero,0,IntPtr.Zero,0,IntPtr.Zero,out limited))throw new Win32Exception();
@@ -68,6 +84,12 @@ public static class TakeDockLimitedProcess {
    finally {if(!SetProcessWindowStation(previous))throw new Win32Exception();}
    if(desktop==IntPtr.Zero)throw new Win32Exception();
    desktopAcl=GrantDesktopAccess(desktop,userSid,0x000f01ff);
+   // Chromium serializes startup across profiles in the session. A mutex
+   // created by runneradmin denies a different ordinary user's CreateMutex.
+   // Never acquire it or change ownership; restore its exact DACL on exit.
+   startupMutex=CreateMutex(IntPtr.Zero,false,"Local\\ChromeProcessSingletonStartup!");
+   if(startupMutex==IntPtr.Zero)throw new Win32Exception();
+   mutexAcl=GrantChromiumStartupAccess(startupMutex,userSid);
    var environment=new System.Collections.Generic.SortedDictionary<string,string>(StringComparer.OrdinalIgnoreCase);
    foreach(System.Collections.DictionaryEntry pair in Environment.GetEnvironmentVariables())environment[(string)pair.Key]=(string)pair.Value;
    environment["USERPROFILE"]=profile;environment["APPDATA"]=profile+"\\AppData\\Roaming";environment["LOCALAPPDATA"]=profile+"\\AppData\\Local";environment["USERNAME"]=user;
@@ -88,6 +110,8 @@ public static class TakeDockLimitedProcess {
    bool restored=true;
    if(desktopAcl!=null)restored &= SetUserObjectSecurity(desktop,ref information,desktopAcl);
    if(stationAcl!=null)restored &= SetUserObjectSecurity(station,ref information,stationAcl);
+   if(mutexAcl!=null)restored &= SetKernelObjectSecurity(startupMutex,4,mutexAcl);
+   if(startupMutex!=IntPtr.Zero)CloseHandle(startupMutex);
    if(desktop!=IntPtr.Zero)CloseDesktop(desktop);
    if(station!=IntPtr.Zero)CloseWindowStation(station);
    if(!restored)throw new Win32Exception("Failed to restore hosted desktop access");

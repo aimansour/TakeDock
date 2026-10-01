@@ -50,27 +50,4 @@ class Probe {
 if($LASTEXITCODE -ne 0){throw 'WebView host diagnostic build failed'}
 $script=Join-Path $probeRoot 'run.ps1'
 "& whoami /groups /fo csv; & '$($probeRoot.Replace("'","''"))/bin/Release/net10.0-windows10.0.17763.0/Probe.exe'; exit `$LASTEXITCODE"|Set-Content $script
-$archive=Join-Path $probeRoot 'ProcessMonitor.zip'
-Invoke-WebRequest 'https://download.sysinternals.com/files/ProcessMonitor.zip' -OutFile $archive
-if((Get-FileHash $archive).Hash -ne '80A6442B46AF762ED1432F6FEC3F7E20366BED62A2522B3486503398A40A1128'){throw 'Diagnostic download checksum changed'}
-Expand-Archive -LiteralPath $archive -DestinationPath (Join-Path $probeRoot 'tools')
-$monitor=Join-Path $probeRoot 'tools/Procmon64.exe'
-$signature=Get-AuthenticodeSignature $monitor
-if($signature.Status -ne 'Valid' -or $signature.SignerCertificate.Subject -notmatch '^CN=Microsoft Corporation,'){throw 'Invalid Microsoft diagnostic signature'}
-$trace=Join-Path $probeRoot 'trace.pml'
-$csv=Join-Path $probeRoot 'trace.csv'
-Start-Process -FilePath $monitor -ArgumentList @('/AcceptEula','/Quiet','/Minimized','/BackingFile',('"'+$trace+'"')) -WindowStyle Hidden|Out-Null
-$idle=Start-Process -FilePath $monitor -ArgumentList '/WaitForIdle' -WindowStyle Hidden -PassThru
-if(-not $idle.WaitForExit(15000)){Stop-Process -Id $idle.Id; Write-Output 'Diagnostic monitor readiness timed out'}
-try {& "$PSScriptRoot/run-desktop-unprivileged.ps1" -Script $script -OutputDirectory $probeRoot}
-finally {
- & $monitor /Terminate
- $export=Start-Process -FilePath $monitor -ArgumentList @('/AcceptEula','/Quiet','/OpenLog',('"'+$trace+'"'),'/SaveAs',('"'+$csv+'"')) -WindowStyle Hidden -PassThru
- if(-not $export.WaitForExit(30000)){Stop-Process -Id $export.Id; Write-Output 'Diagnostic monitor export timed out'}
- if(Test-Path $csv) {
-  # Process-start records can contain inherited environment secrets. Export only
-  # file/registry results and paths, never command lines or environment blocks.
-  Import-Csv -LiteralPath $csv | Where-Object {$_.'Process Name' -in @('Probe.exe','msedgewebview2.exe') -and ($_.Result -eq 'ACCESS DENIED' -or $_.Path -match 'lockfile') -and $_.Operation -notin @('Process Start','Process Create')} | Select-Object 'Process Name',PID,Operation,Path,Result | Export-Csv -LiteralPath (Join-Path $probeRoot 'safe-results.csv') -NoTypeInformation
-  Get-Content -LiteralPath (Join-Path $probeRoot 'safe-results.csv') -Tail 60
- }
-}
+& "$PSScriptRoot/run-desktop-unprivileged.ps1" -Script $script -OutputDirectory $probeRoot
