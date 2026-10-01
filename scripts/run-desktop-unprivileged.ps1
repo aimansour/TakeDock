@@ -17,6 +17,15 @@ public static class TakeDockLimitedProcess {
   public IntPtr bytes,input,output,error;
  }
  [StructLayout(LayoutKind.Sequential)] struct PROCESS_INFORMATION {public IntPtr process,thread;public int pid,tid;}
+ [StructLayout(LayoutKind.Sequential)] struct SECURITY_ATTRIBUTES {public int length;public IntPtr descriptor;public int inherit;}
+ [DllImport("advapi32.dll",CharSet=CharSet.Unicode,SetLastError=true)] static extern bool ConvertStringSecurityDescriptorToSecurityDescriptor(string sddl,uint revision,out IntPtr descriptor,out uint size);
+ [DllImport("user32.dll",CharSet=CharSet.Unicode,SetLastError=true)] static extern IntPtr CreateWindowStation(string name,uint flags,uint access,ref SECURITY_ATTRIBUTES attributes);
+ [DllImport("user32.dll",SetLastError=true)] static extern IntPtr GetProcessWindowStation();
+ [DllImport("user32.dll",SetLastError=true)] static extern bool SetProcessWindowStation(IntPtr station);
+ [DllImport("user32.dll",CharSet=CharSet.Unicode,SetLastError=true)] static extern IntPtr CreateDesktop(string name,IntPtr device,IntPtr mode,uint flags,uint access,ref SECURITY_ATTRIBUTES attributes);
+ [DllImport("user32.dll")] static extern bool CloseDesktop(IntPtr desktop);
+ [DllImport("user32.dll")] static extern bool CloseWindowStation(IntPtr station);
+ [DllImport("kernel32.dll")] static extern IntPtr LocalFree(IntPtr memory);
  [DllImport("kernel32.dll")] static extern IntPtr GetCurrentProcess();
  [DllImport("kernel32.dll",SetLastError=true)] static extern bool CloseHandle(IntPtr handle);
  [DllImport("advapi32.dll",SetLastError=true)] static extern bool OpenProcessToken(IntPtr process,uint access,out IntPtr token);
@@ -25,16 +34,33 @@ public static class TakeDockLimitedProcess {
  [DllImport("kernel32.dll",SetLastError=true)] static extern uint WaitForSingleObject(IntPtr handle,uint milliseconds);
  [DllImport("kernel32.dll",SetLastError=true)] static extern bool GetExitCodeProcess(IntPtr process,out uint code);
  public static int Run(string application,string command,string directory) {
-  IntPtr token=IntPtr.Zero,limited=IntPtr.Zero; PROCESS_INFORMATION info=default;
+  IntPtr token=IntPtr.Zero,limited=IntPtr.Zero,descriptor=IntPtr.Zero,station=IntPtr.Zero,desktop=IntPtr.Zero; PROCESS_INFORMATION info=default;
   try {
    if(!OpenProcessToken(GetCurrentProcess(),0x000F01FF,out token))throw new Win32Exception();
    if(!CreateRestrictedToken(token,4,0,IntPtr.Zero,0,IntPtr.Zero,0,IntPtr.Zero,out limited))throw new Win32Exception();
-   var startup=new STARTUPINFO {cb=Marshal.SizeOf<STARTUPINFO>(),desktop="winsta0\\default",flags=1,show=0};
+   // A test-owned noninteractive station avoids changing the host desktop ACL.
+   string sid=System.Security.Principal.WindowsIdentity.GetCurrent().User.Value;
+   if(!ConvertStringSecurityDescriptorToSecurityDescriptor("D:(A;;GA;;;"+sid+")(A;;GA;;;SY)",1,out descriptor,out var size))throw new Win32Exception();
+   var attributes=new SECURITY_ATTRIBUTES {length=Marshal.SizeOf<SECURITY_ATTRIBUTES>(),descriptor=descriptor};
+   string name="TakeDockTest-"+Guid.NewGuid().ToString("N");
+   station=CreateWindowStation(name,0,0x000f037f,ref attributes);
+   if(station==IntPtr.Zero)throw new Win32Exception();
+   var previous=GetProcessWindowStation();
+   if(!SetProcessWindowStation(station))throw new Win32Exception();
+   try {desktop=CreateDesktop("Default",IntPtr.Zero,IntPtr.Zero,0,0x000f01ff,ref attributes);}
+   finally {if(!SetProcessWindowStation(previous))throw new Win32Exception();}
+   if(desktop==IntPtr.Zero)throw new Win32Exception();
+   var startup=new STARTUPINFO {cb=Marshal.SizeOf<STARTUPINFO>(),desktop=name+"\\Default",flags=1,show=0};
    if(!CreateProcessAsUser(limited,application,new System.Text.StringBuilder(command),IntPtr.Zero,IntPtr.Zero,false,0x08000000,IntPtr.Zero,directory,ref startup,out info))throw new Win32Exception();
    if(WaitForSingleObject(info.process,0xffffffff)!=0)throw new Win32Exception();
    if(!GetExitCodeProcess(info.process,out var code))throw new Win32Exception();
    return unchecked((int)code);
-  } finally {foreach(var handle in new[]{info.thread,info.process,limited,token})if(handle!=IntPtr.Zero)CloseHandle(handle);}
+  } finally {
+   foreach(var handle in new[]{info.thread,info.process,limited,token})if(handle!=IntPtr.Zero)CloseHandle(handle);
+   if(desktop!=IntPtr.Zero)CloseDesktop(desktop);
+   if(station!=IntPtr.Zero)CloseWindowStation(station);
+   if(descriptor!=IntPtr.Zero)LocalFree(descriptor);
+  }
  }
 }
 '@
