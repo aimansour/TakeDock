@@ -26,6 +26,9 @@ class Probe {
   Console.WriteLine("Session="+Process.GetCurrentProcess().SessionId);
   Console.WriteLine("LocalAppData="+Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData));
   Console.WriteLine("UserFolderOverride="+Environment.GetEnvironmentVariable("WEBVIEW2_USER_DATA_FOLDER"));
+  var unique=CreateMutex(IntPtr.Zero,false,"Local\\TakeDock-probe-"+Guid.NewGuid());
+  Console.WriteLine("UniqueLocalMutexWin32Error="+(unique==IntPtr.Zero?System.Runtime.InteropServices.Marshal.GetLastWin32Error():0));
+  if(unique!=IntPtr.Zero)CloseHandle(unique);
   var mutex=CreateMutex(IntPtr.Zero,false,@"Local\ChromeProcessSingletonStartup!");
   if(mutex==IntPtr.Zero)Console.WriteLine("ChromiumStartupMutexWin32Error="+System.Runtime.InteropServices.Marshal.GetLastWin32Error());
   else {Console.WriteLine("ChromiumStartupMutex=accessible");CloseHandle(mutex);}

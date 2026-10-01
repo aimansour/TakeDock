@@ -19,6 +19,9 @@ public static class TakeDockLimitedProcess {
   public IntPtr bytes,input,output,error;
  }
  [StructLayout(LayoutKind.Sequential)] struct PROCESS_INFORMATION {public IntPtr process,thread;public int pid,tid;}
+ [StructLayout(LayoutKind.Sequential)] struct UNICODE_STRING {public ushort length,maximum;public IntPtr buffer;}
+ [StructLayout(LayoutKind.Sequential)] struct OBJECT_ATTRIBUTES {public int length;public IntPtr root,name;public uint attributes;public IntPtr descriptor,quality;}
+ [DllImport("ntdll.dll")] static extern int NtOpenDirectoryObject(out IntPtr handle,uint access,ref OBJECT_ATTRIBUTES attributes);
  [DllImport("user32.dll",CharSet=CharSet.Unicode,SetLastError=true)] static extern IntPtr OpenWindowStation(string name,bool inherit,uint access);
  [DllImport("user32.dll",SetLastError=true)] static extern IntPtr GetProcessWindowStation();
  [DllImport("user32.dll",SetLastError=true)] static extern bool SetProcessWindowStation(IntPtr station);
@@ -88,8 +91,26 @@ public static class TakeDockLimitedProcess {
    return Marshal.PtrToStringUni(text);
   } finally {if(text!=IntPtr.Zero)LocalFree(text);}
  }
+ static IntPtr OpenSessionObjectDirectory() {
+  var name="\\Sessions\\"+System.Diagnostics.Process.GetCurrentProcess().SessionId+"\\BaseNamedObjects";
+  var text=Marshal.StringToHGlobalUni(name);var pointer=Marshal.AllocHGlobal(Marshal.SizeOf<UNICODE_STRING>());
+  try {
+   Marshal.StructureToPtr(new UNICODE_STRING {length=(ushort)(name.Length*2),maximum=(ushort)((name.Length+1)*2),buffer=text},pointer,false);
+   var attributes=new OBJECT_ATTRIBUTES {length=Marshal.SizeOf<OBJECT_ATTRIBUTES>(),name=pointer,attributes=0x40};
+   var result=NtOpenDirectoryObject(out var handle,0x00060003,ref attributes);
+   if(result<0)throw new Exception("Session object directory access failed: "+result.ToString("x8"));
+   return handle;
+  } finally {Marshal.FreeHGlobal(pointer);Marshal.FreeHGlobal(text);}
+ }
+ static void GrantSessionObjectAccess(IntPtr handle,string userSid) {
+  var security=new System.Security.AccessControl.RawSecurityDescriptor(ReadKernelSecurity(handle,4),0);
+  if(security.DiscretionaryAcl==null)return;
+  security.DiscretionaryAcl.InsertAce(security.DiscretionaryAcl.Count,new System.Security.AccessControl.CommonAce(System.Security.AccessControl.AceFlags.None,System.Security.AccessControl.AceQualifier.AccessAllowed,7,new System.Security.Principal.SecurityIdentifier(userSid),false,null));
+  var modified=new byte[security.BinaryLength];security.GetBinaryForm(modified,0);
+  if(!SetKernelObjectSecurity(handle,4,modified))throw new Win32Exception();
+ }
  public static int Run(string application,string command,string directory,string user,string password,string userSid,string profile,string temporary) {
-  IntPtr token=IntPtr.Zero,limited=IntPtr.Zero,station=IntPtr.Zero,desktop=IntPtr.Zero,startupMutex=IntPtr.Zero; byte[] stationAcl=null,desktopAcl=null,mutexAcl=null; PROCESS_INFORMATION info=default;
+  IntPtr token=IntPtr.Zero,limited=IntPtr.Zero,station=IntPtr.Zero,desktop=IntPtr.Zero,startupMutex=IntPtr.Zero,objectDirectory=IntPtr.Zero; byte[] stationAcl=null,desktopAcl=null,mutexAcl=null,mutexLabel=null,objectAcl=null; PROCESS_INFORMATION info=default;
   try {
    if(!OpenProcessToken(GetCurrentProcess(),0x000F01FF,out token))throw new Win32Exception();
    if(!CreateRestrictedToken(token,4,0,IntPtr.Zero,0,IntPtr.Zero,0,IntPtr.Zero,out limited))throw new Win32Exception();
@@ -108,12 +129,17 @@ public static class TakeDockLimitedProcess {
    finally {if(!SetProcessWindowStation(previous))throw new Win32Exception();}
    if(desktop==IntPtr.Zero)throw new Win32Exception();
    desktopAcl=GrantDesktopAccess(desktop,userSid,0x000f01ff);
+   objectDirectory=OpenSessionObjectDirectory();
+   objectAcl=ReadKernelSecurity(objectDirectory,4);
+   GrantSessionObjectAccess(objectDirectory,userSid);
    // Chromium serializes startup across profiles in the session. A mutex
    // created by runneradmin denies a different ordinary user's CreateMutex.
    // Never acquire it or change ownership; restore its exact DACL on exit.
    startupMutex=CreateMutex(IntPtr.Zero,false,"Local\\ChromeProcessSingletonStartup!");
    if(startupMutex==IntPtr.Zero)throw new Win32Exception();
-   mutexAcl=ReadKernelSecurity(startupMutex,0x14);
+   mutexAcl=ReadKernelSecurity(startupMutex,4);
+   var originalMutexText=KernelSecurityText(startupMutex);
+   if(originalMutexText.Contains(";;;HI)") || originalMutexText.Contains(";;;SI)"))mutexLabel=ReadKernelSecurity(startupMutex,0x10);
    Console.WriteLine("HostedMutexSession="+System.Diagnostics.Process.GetCurrentProcess().SessionId+"; account="+userSid+"; before="+KernelSecurityText(startupMutex));
    GrantChromiumStartupAccess(startupMutex,userSid);
    Console.WriteLine("HostedMutexAfter="+KernelSecurityText(startupMutex));
@@ -137,8 +163,11 @@ public static class TakeDockLimitedProcess {
    bool restored=true;
    if(desktopAcl!=null)restored &= SetUserObjectSecurity(desktop,ref information,desktopAcl);
    if(stationAcl!=null)restored &= SetUserObjectSecurity(station,ref information,stationAcl);
-   if(mutexAcl!=null)restored &= SetKernelObjectSecurity(startupMutex,0x14,mutexAcl);
+   if(mutexAcl!=null)restored &= SetKernelObjectSecurity(startupMutex,4,mutexAcl);
+   if(mutexLabel!=null)restored &= SetKernelObjectSecurity(startupMutex,0x10,mutexLabel);
+   if(objectAcl!=null)restored &= SetKernelObjectSecurity(objectDirectory,4,objectAcl);
    if(startupMutex!=IntPtr.Zero)CloseHandle(startupMutex);
+   if(objectDirectory!=IntPtr.Zero)CloseHandle(objectDirectory);
    if(desktop!=IntPtr.Zero)CloseDesktop(desktop);
    if(station!=IntPtr.Zero)CloseWindowStation(station);
    if(!restored)throw new Win32Exception("Failed to restore hosted desktop access");
