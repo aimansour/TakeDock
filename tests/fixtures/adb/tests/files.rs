@@ -248,6 +248,15 @@ fn rename_requires_one_selection_and_never_overwrites() {
         .unwrap();
     assert_eq!(fixture.result(&id)["status"], "failed");
     assert!(fixture.original(&video.name).exists());
+    // Claim/restore changes Unix ctime even after a collision. The UI refreshes
+    // at job completion, so a retry must use its freshly listed identity.
+    let video = fixture
+        .files
+        .list(fixture.engine.lease().unwrap())
+        .unwrap()
+        .into_iter()
+        .find(|item| item.name == video.name)
+        .unwrap();
     let id = fixture
         .files
         .start_job(
