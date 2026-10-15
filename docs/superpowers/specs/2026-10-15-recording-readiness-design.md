@@ -1,7 +1,8 @@
 # Recording speech-readiness cue
 
-Date: 2026-10-15. Status: written design for user review; implementation has not
-started. The user approved a separate TakeDock cue through their PC headphones.
+Date: 2026-10-15. Status: approved by the user; implementation-plan review is next.
+Implementation has not started. The user approved a separate TakeDock cue through
+their PC headphones.
 
 ## Intended outcome
 
