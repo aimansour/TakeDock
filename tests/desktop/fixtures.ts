@@ -45,6 +45,8 @@ export function prepareFixture(connected = false) {
   );
   for (const name of ["a'b.mp4", 'رحلة.mp4'])
     writeFileSync(join(fixtureRoot, 'videos', name), video());
+  // Legacy settings deliberately omit readiness fields to exercise migration
+  // defaults through the actual release executable on each fresh fixture.
   writeFileSync(
     settingsPath,
     JSON.stringify({
