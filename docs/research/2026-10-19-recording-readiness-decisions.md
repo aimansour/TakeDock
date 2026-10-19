@@ -1,6 +1,6 @@
 # Recording-readiness execution decisions
 
-These are all 15 recorded rulings, in execution order. The fresh reviewer raised
+These are all 16 recorded rulings, in execution order. The fresh reviewer raised
 no Minor findings. One non-blocking final-verification follow-up is deferred:
 the updater validation example logs a missing default-window-icon resource,
 although its signed-update checks pass and no installation runs.
@@ -26,3 +26,5 @@ although its signed-update checks pass and no installation runs.
 
 The earlier pending-acoustic ruling was resolved by the completed, user-authorized current-device experiment. It does not extend acceptance to external microphones or other output/hardware configurations.
 The broader feature requests remain active; see the approved spec and measured acceptance report.
+
+- Final: Ruling: archive this plan workspace and the temporary official-source clone after automatic review rejected recursive deletion, including a fixed-literal-path attempt — a verified move to a new task-specific local temporary archive preserves every byte while clearing only these owned worktree paths — cost if wrong: temporary disk space remains occupied until later cleanup; the tested product, raw evidence and feature worktree are preserved.
