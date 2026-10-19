@@ -472,3 +472,198 @@ fn a_stale_interface_cannot_send_a_capture_to_the_current_phone() {
     assert_eq!(engine.snapshot().command_sequence, 0);
     engine.shutdown();
 }
+
+#[test]
+fn observer_failures_cancel_confirmed_readiness_without_reviving_on_recovery() {
+    use std::sync::Mutex;
+    use takedock_lib::model::SpeechReadiness;
+    for (message, code) in [
+        (
+            serde_json::json!({"type":"error","message":"State observation failed: IllegalStateException"}),
+            "observer_failed",
+        ),
+        (
+            serde_json::json!({"type":"state","seq":"invalid"}),
+            "observer_protocol_invalid",
+        ),
+        (
+            serde_json::json!({"type":null}),
+            "observer_protocol_invalid",
+        ),
+    ] {
+        let (directory, adb_path) = fixture();
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let output = events.clone();
+        let engine = Engine::start(
+            Settings {
+                adb_path,
+                ready_delay_ms: 1000,
+                ..Default::default()
+            },
+            directory.path().join("observer.apk"),
+            Arc::new(move |event, value| output.lock().unwrap().push((event.to_owned(), value))),
+        )
+        .unwrap();
+        wait_until(|| engine.snapshot().predicted == RecordingState::Idle);
+        engine.dispatch(RecordingAction::Start).unwrap();
+        wait_until(|| {
+            engine.snapshot().observed == RecordingState::Recording
+                && engine.snapshot().pending == 0
+        });
+        assert_eq!(
+            engine.snapshot().speech_readiness,
+            SpeechReadiness::Preparing
+        );
+        std::fs::write(directory.path().join("hold-observation"), b"").unwrap();
+        inject_observer_event(directory.path(), &message);
+        wait_until(|| {
+            events
+                .lock()
+                .unwrap()
+                .iter()
+                .any(|(event, value)| event == "operation-error" && value["code"] == code)
+        });
+        assert_eq!(
+            engine.snapshot().speech_readiness,
+            SpeechReadiness::Inactive,
+            "{code} must cancel the confirmed candidate"
+        );
+        assert!(
+            engine.lease().is_ok(),
+            "file operations retain the authorized device"
+        );
+        inject_observer_event(
+            directory.path(),
+            &serde_json::json!({"type":"state","seq":100,"event_time":10000,"state":"recording","foreground":true,"video_mode":true}),
+        );
+        std::thread::sleep(Duration::from_millis(1200));
+        assert_eq!(
+            engine.snapshot().speech_readiness,
+            SpeechReadiness::Inactive
+        );
+        assert!(
+            !events
+                .lock()
+                .unwrap()
+                .iter()
+                .any(|(event, _)| event == "speech-ready")
+        );
+        assert!(
+            events
+                .lock()
+                .unwrap()
+                .iter()
+                .any(|(event, value)| event == "session-state"
+                    && value["speech_readiness"] == "inactive"
+                    && value["command_sequence"] == 1)
+        );
+        engine.shutdown();
+    }
+}
+
+fn inject_observer_event(root: &std::path::Path, value: &serde_json::Value) {
+    let _ = std::fs::remove_file(root.join("injected-event"));
+    std::fs::write(
+        root.join("inject-event.tmp"),
+        serde_json::to_vec(value).unwrap(),
+    )
+    .unwrap();
+    std::fs::rename(
+        root.join("inject-event.tmp"),
+        root.join("inject-event.json"),
+    )
+    .unwrap();
+    wait_until(|| root.join("injected-event").exists());
+}
+
+#[test]
+fn observer_failure_cancels_an_unclaimed_cue_behind_held_audio() {
+    use std::sync::{Mutex, Weak, mpsc};
+    use takedock_lib::{
+        audio::{AudioDispatcher, Tone},
+        readiness::ReadyToken,
+    };
+    let (directory, adb_path) = fixture();
+    let slot: Arc<Mutex<Option<Weak<Engine>>>> = Arc::new(Mutex::new(None));
+    let claim_slot = slot.clone();
+    let (played, tones) = mpsc::channel();
+    let (release, held) = mpsc::channel();
+    let held = Mutex::new(held);
+    let first = std::sync::atomic::AtomicBool::new(true);
+    let audio = Arc::new(AudioDispatcher::start(
+        Arc::new(move |tone| {
+            played.send(tone).unwrap();
+            if first.swap(false, std::sync::atomic::Ordering::SeqCst) {
+                held.lock()
+                    .unwrap()
+                    .recv_timeout(Duration::from_secs(5))
+                    .map_err(|e| e.to_string())?;
+            }
+            Ok(())
+        }),
+        Arc::new(move |token| {
+            claim_slot
+                .lock()
+                .unwrap()
+                .as_ref()
+                .and_then(Weak::upgrade)
+                .is_some_and(|engine| engine.claim_ready_cue(token))
+        }),
+        Arc::new(|_, error| panic!("unexpected audio error: {error}")),
+    ));
+    let queued = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let queued_output = queued.clone();
+    let errors = Arc::new(Mutex::new(Vec::new()));
+    let error_output = errors.clone();
+    let audio_output = audio.clone();
+    let engine = Arc::new(
+        Engine::start(
+            Settings {
+                adb_path,
+                ready_delay_ms: 500,
+                ..Default::default()
+            },
+            directory.path().join("observer.apk"),
+            Arc::new(move |event, value| {
+                if event == "speech-ready" {
+                    audio_output.ready(serde_json::from_value::<ReadyToken>(value).unwrap());
+                    queued_output.store(true, std::sync::atomic::Ordering::SeqCst);
+                } else if event == "operation-error" {
+                    error_output.lock().unwrap().push(value);
+                }
+            }),
+        )
+        .unwrap(),
+    );
+    *slot.lock().unwrap() = Some(Arc::downgrade(&engine));
+    wait_until(|| engine.snapshot().predicted == RecordingState::Idle);
+    audio.feedback(false);
+    assert_eq!(
+        tones.recv_timeout(Duration::from_secs(2)).unwrap(),
+        Tone::Failure
+    );
+    engine.dispatch(RecordingAction::Start).unwrap();
+    wait_until(|| queued.load(std::sync::atomic::Ordering::SeqCst));
+    std::fs::write(directory.path().join("hold-observation"), b"").unwrap();
+    inject_observer_event(
+        directory.path(),
+        &serde_json::json!({"type":"error","message":"State observation failed: IllegalStateException"}),
+    );
+    wait_until(|| {
+        errors
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|v| v["code"] == "observer_failed")
+    });
+    // A later success sentinel proves the worker passed the cancelled entry.
+    audio.feedback(true);
+    release.send(()).unwrap();
+    assert_eq!(
+        tones.recv_timeout(Duration::from_secs(2)).unwrap(),
+        Tone::Success
+    );
+    engine.shutdown();
+    audio.shutdown();
+    assert!(tones.try_recv().is_err());
+}

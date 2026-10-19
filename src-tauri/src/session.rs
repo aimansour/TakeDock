@@ -87,6 +87,23 @@ impl Shared {
             serde_json::json!({"generation":self.generation.load(Ordering::Acquire),"code":code,"detail":detail}),
         );
     }
+    fn observer_failure(&self, generation: u64, code: &str, detail: &str) {
+        let state = {
+            let mut model = self.model.lock().unwrap();
+            if model.state.generation != generation || !self.current(generation) {
+                return;
+            }
+            // A live read/protocol error invalidates the evidence behind a cue.
+            // Keep capture prediction and the authorized file lease unchanged.
+            model.invalidate_speech_readiness();
+            model.snapshot_for_event()
+        };
+        (self.sink)("session-state", serde_json::to_value(state).unwrap());
+        (self.sink)(
+            "operation-error",
+            serde_json::json!({"generation":generation,"code":code,"detail":detail}),
+        );
+    }
     fn delivery_failed(&self, generation: u64, sequence: u64) {
         let mut model = self.model.lock().unwrap();
         if model.state.generation != generation {
@@ -313,15 +330,22 @@ impl Shared {
                                     shared.results(results);
                                     shared.state();
                                 }
-                                Err(_) => shared.error("observer_protocol_invalid", ""),
+                                Err(_) => shared.observer_failure(
+                                    generation,
+                                    "observer_protocol_invalid",
+                                    "",
+                                ),
                             }
                         } else if value["type"] == "error" {
-                            shared
-                                .error("observer_failed", value["message"].as_str().unwrap_or(""));
+                            shared.observer_failure(
+                                generation,
+                                "observer_failed",
+                                value["message"].as_str().unwrap_or(""),
+                            );
                         }
                     }
                     Ok(_) => {}
-                    Err(_) => shared.error("observer_protocol_invalid", ""),
+                    Err(_) => shared.observer_failure(generation, "observer_protocol_invalid", ""),
                 }
             }
             if shared.current(generation) {
