@@ -1,8 +1,10 @@
 # Recording speech-readiness cue
 
-Date: 2026-10-15. Status: approved by the user; implementation-plan review is next.
-Implementation has not started. The user approved a separate TakeDock cue through
-their PC headphones.
+Date: 2026-10-15. Status: implemented and verified on the specified setup on
+2026-10-19. The user approved a separate TakeDock cue through the default PC
+output, originally routed to headphones. They later authorized an automated
+external-speaker acoustic experiment; see the
+[acceptance report](../../research/2026-10-19-recording-readiness-acceptance.md).
 
 ## Intended outcome
 
@@ -161,6 +163,16 @@ new third-party dependency. Existing supported Windows/Android targets remain
 the baseline; compilation alone does not expand physical compatibility claims.
 
 ## Acceptance and verification
+
+Physical-procedure amendment, explicitly authorized by the user on 2026-10-19:
+the manual source/headphone arrangement in item 6 below was replaced by an
+automated coded external PC speaker reference and known synthesized words,
+with NVDA running. Eleven formal single-sentence takes provide ten resolved
+acoustic references; three same-take early/late repeat controls judge the
+opening and gain plateau. The original headphone arrangement and external
+microphones are not certified by this amended current-device experiment.
+The acceptance report records the unclassified take, uncertainty, native
+fast-Stop prerequisite and the successful physical cancellation cases.
 
 1. Deterministic Rust clock tests prove: no cue before confirmation or deadline;
    one cue per eligible Start; no replay across windows or bootstrap; correct

@@ -17,7 +17,7 @@ The preparation preamble remains in the recording.
 
 ## Automated evidence — 2026-10-19
 
-- Rust 1.98.1: 90 workspace/model/process/helper tests passed. Deterministic clock
+- Rust 1.98.1: 92 workspace/model/process/helper tests passed. Deterministic clock
   cases cover confirmation-relative deadlines, one claim, cancellation,
   unknown-before/after-confirmation, settings changes and saturating arithmetic.
 - Eight injected-player audio tests use explicit barriers and a later success
@@ -33,11 +33,11 @@ The preparation preamble remains in the recording.
   frontend build passed.
 - Strict Clippy passed for the workspace, all targets and desktop feature.
   Four release/publication/tooling script tests passed.
-- Release EXE/WebView2 acceptance: all four extended cases passed (16.5 s) on
+- Release EXE/WebView2 acceptance: all four extended cases passed on
   Windows build 10.0.26300.0, WebView2/EdgeDriver 155.0.4283.62 and tauri-driver
   2.1.0, under the ordinary current user. The report identifies product commit
-  `ba30c851875615582e83e2de98a2baa196a1ba6f` and EXE SHA-256
-  `58a5d9ac72f731491890c6f2ed23152bc6d3ee898a39ebb70ec380717bed4658`.
+  `4d50c5d358a20e71d3b7d4ac134bdd1501bdf850` and EXE SHA-256
+  `a73031c49e20e83c801345b8f03c9b3e5cdd9300ce4ad6297768862a4b40d3dc`.
   Complete executable/resource hashes are in `test-results/desktop/acceptance.json`.
 - The updater fixture passed signed download, corruption rejection, signed
   version binding, downgrade and malformed-manifest checks; no update was installed.
@@ -48,6 +48,11 @@ and helper sources had no diff from tag `v0.1.2`. A development APK was not used
 to replace the phone's signed Observer.
 
 ## Physical acceptance procedure
+
+The user approved an automated external-speaker reference on 2026-10-19 in
+place of the manual headphone/hum/word procedure below. The actual protocol,
+controls, uncertainties and results are recorded in
+[the automated acceptance report](../research/2026-10-19-recording-readiness-acceptance.md).
 
 1. Identify the release EXE by SHA-256 and record current Windows, phone and Open
    Camera versions. Save existing app settings and the phone's actual enabled
@@ -72,13 +77,20 @@ to replace the phone's signed Observer.
 
 ## Physical evidence status
 
-Pending the release-app marked-word trials. Preparation on 2026-10-19 observed
-Samsung SM-A155F, Android 16, Open Camera 1.56.2, Windows build 10.0.26300.0 and
-enabled TalkBack. These inventory checks are not recording/audio acceptance.
+Accepted for the tested setup on 2026-10-19: eleven formal single-sentence takes
+provided ten resolved acoustic cue references and one explicitly unclassified
+take; three paired repeat controls supported preservation of the tested opening.
+All six real-phone cancellation/window/concurrent-copy scenarios passed. The
+phone's measured near-plateau preceded the cue by 200–236 ms, with approximately
+±40 ms timing uncertainty. NVDA and TalkBack remained active. All 24 test-created
+phone clips were removed only after verified local copies and full decoding;
+capture ended idle and app settings/accessibility services were restored.
 
 The [2026-10-15 diagnostic probe](../research/2026-10-15-recording-startup-measurements.md)
 predates this cue and cannot certify its audible routing or release behavior.
-The 800 ms guard remains proposed until physical acceptance. Fixture success
-does not establish that first words are preserved on a phone or external mic.
+The 800 ms guard is accepted for the current phone/internal microphone and
+tested default speaker output. External microphones and other configurations
+remain unverified. Open Camera's existing 500 ms fast-Stop exclusion is recorded
+in the acceptance report and must be handled by the later discard design.
 If real acceptance fails, return to diagnosis and design review rather than
 silently increasing delays or claiming universal microphone readiness.

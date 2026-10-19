@@ -10,6 +10,13 @@
 
 **Spec:** [Approved recording-readiness design](../specs/2026-10-15-recording-readiness-design.md). Read the spec and its [measurement report](../../research/2026-10-15-recording-startup-measurements.md) before executing.
 
+**Execution update, 2026-10-19:** The user selected Native execution. Tasks 1–6
+are implemented, with the one whole-branch review and its TDD fix pass. The user
+later authorized an automated external-speaker/known-speech procedure in place
+of manual headphone/hum trials. Current-device evidence and the native 500 ms
+fast-Stop prerequisite are in the
+[acceptance report](../../research/2026-10-19-recording-readiness-acceptance.md).
+
 ## Global Constraints
 
 - One 1100 Hz, 100 ms tone through the Windows session's default audio output; do not change system volume or switch the user's output device.
@@ -282,4 +289,7 @@ Use the existing `run-desktop-unprivileged.ps1` wrapper only if the current exec
 
 Coverage map: persistence/migration → Task 1; timing and cancellation → Task 2; command causality, stale events and suppression → Task 3; global audio, claiming, routing and errors → Task 4; bilingual accessible controls → Task 5; EXE integration and actual speech evidence → Task 6. All five Review Focus items have named owning tests. No broader requested work is dropped; it remains listed in the approved spec.
 
-Execution has not started. The user must review this plan and choose an execution method. Recommended: **Subagent-driven**, because an incorrect readiness/cancellation decision can lose the beginning of a take and each state/audio boundary merits fresh review. **Native** is also supported: one implementer in this session, followed by one fresh whole-branch reviewer, with lower context/review overhead.
+The user approved the plan and chose **Native** on 2026-10-19. Implementation,
+the one independent review, its regression-tested correction, and the amended
+real-device acceptance are complete. Integration remains the user's decision;
+the other requested components remain listed in the spec.
