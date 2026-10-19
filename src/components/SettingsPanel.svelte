@@ -47,6 +47,7 @@
   <form
     onsubmit={(event) => {
       event.preventDefault();
+      if (!event.currentTarget.checkValidity()) return;
       onSave({ ...draft, verification_ms: seconds * 1000 });
     }}
   >
@@ -74,11 +75,33 @@
         >{t(settings.language, 'chooseAdb')}</button
       >
     </div>
+    <label class="check-label" for="ready-sound">
+      <input
+        id="ready-sound"
+        type="checkbox"
+        bind:checked={draft.ready_sound}
+      />{t(settings.language, 'readySound')}
+    </label>
+    <label for="ready-delay">{t(settings.language, 'readyDelay')}</label>
+    <input
+      id="ready-delay"
+      type="number"
+      bind:value={draft.ready_delay_ms}
+      min="500"
+      max="5000"
+      step="50"
+      required
+      aria-describedby="ready-delay-help"
+    />
+    <p id="ready-delay-help" class="hint">
+      {t(settings.language, 'readyDelayHelp')}
+    </p>
     <label class="check-label"
-      ><input type="checkbox" bind:checked={draft.success_sound} />{t(
-        settings.language,
-        'successSound',
-      )}</label
+      ><input
+        id="success-sound"
+        type="checkbox"
+        bind:checked={draft.success_sound}
+      />{t(settings.language, 'successSound')}</label
     >
     <p class="hint">{t(settings.language, 'failureSoundHelp')}</p>
     <label for="verification">{t(settings.language, 'verification')}</label

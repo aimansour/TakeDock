@@ -1,8 +1,10 @@
 import { render, screen } from '@testing-library/svelte';
 import { tick } from 'svelte';
-import { expect, it, vi } from 'vitest';
+import { afterEach, expect, it, vi } from 'vitest';
 import RecordingPanel from './RecordingPanel.svelte';
 import { initialSession } from '../lib/types';
+import { ipc } from '../lib/ipc';
+afterEach(() => vi.restoreAllMocks());
 const ready = {
   ...initialSession,
   generation: 7,
@@ -14,6 +16,56 @@ const ready = {
   observed: 'idle' as const,
   condition: 'ready',
 };
+it.each([
+  ['en', 'Preparing to speak', 'Ready to speak', 'Stop video'],
+  ['ar', 'جارٍ التجهيز للكلام', 'جاهز للكلام', 'إنهاء الفيديو'],
+] as const)(
+  'renders ordinary %s readiness without moving focus or playing audio',
+  async (language, preparing, speaking, stopName) => {
+    const sound = vi.spyOn(ipc, 'sound').mockResolvedValue(undefined);
+    const recording = {
+      ...ready,
+      predicted: 'recording' as const,
+      observed: 'recording' as const,
+    };
+    const { rerender, container } = render(RecordingPanel, {
+      state: recording,
+      language,
+      onAction: vi.fn(),
+    });
+    expect(container.querySelector('#speech-readiness')).toBeNull();
+    const stop = screen.getByRole('button', { name: stopName });
+    stop.focus();
+    await rerender({ state: { ...recording, speech_readiness: 'preparing' } });
+    expect(screen.getByText(preparing)).toHaveAttribute(
+      'id',
+      'speech-readiness',
+    );
+    expect(screen.getByText(preparing)).toHaveAttribute(
+      'data-readiness',
+      'preparing',
+    );
+    expect(stop).toHaveFocus();
+    await rerender({ state: { ...recording, speech_readiness: 'ready' } });
+    expect(screen.getByText(speaking)).toHaveAttribute(
+      'data-readiness',
+      'ready',
+    );
+    expect(screen.getByRole('button', { name: stopName })).toBe(stop);
+    expect(stop).toHaveFocus();
+    await rerender({ state: recording });
+    expect(container.querySelector('#speech-readiness')).toBeNull();
+    expect(stop).toHaveFocus();
+    expect(container.querySelector('section')).toHaveAttribute(
+      'dir',
+      language === 'ar' ? 'rtl' : 'ltr',
+    );
+    expect(
+      container.querySelector('[aria-live], [role="alert"], [role="status"]'),
+    ).toBeNull();
+    expect(sound).not.toHaveBeenCalled();
+  },
+);
 it.each([
   { foreground: false },
   { connected: false },

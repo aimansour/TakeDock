@@ -77,6 +77,58 @@ it('shares settings changes and consumes asynchronous feedback without extra sou
   expect(mocks.sound).not.toHaveBeenCalled();
   app.dispose();
 });
+it('shares readiness settings and backend state across windows without frontend audio', async () => {
+  const callbacks = new Map<string, ((value: unknown) => void)[]>();
+  mocks.listen.mockImplementation(
+    (name: string, callback: (value: unknown) => void) => {
+      callbacks.set(name, [...(callbacks.get(name) ?? []), callback]);
+      return Promise.resolve(vi.fn());
+    },
+  );
+  const first = createSession();
+  const second = createSession();
+  await Promise.all([first.initialize(), second.initialize()]);
+  const saved = {
+    ...defaultSettings,
+    language: 'ar' as const,
+    ready_sound: false,
+    ready_delay_ms: 1250,
+  };
+  for (const callback of callbacks.get('settings-changed') ?? [])
+    callback(saved);
+  for (const app of [first, second]) {
+    expect(app.data.settings).toMatchObject({
+      language: 'ar',
+      ready_sound: false,
+      ready_delay_ms: 1250,
+      success_sound: false,
+    });
+  }
+  for (const [revision, state] of [
+    [1, 'preparing'],
+    [2, 'ready'],
+  ] as const) {
+    for (const callback of callbacks.get('session-state') ?? [])
+      callback({
+        ...initialSession,
+        generation: 3,
+        revision,
+        connected: true,
+        observer_ready: true,
+        foreground: true,
+        video_mode: true,
+        predicted: 'recording',
+        observed: 'recording',
+        command_sequence: 1,
+        speech_readiness: state,
+      });
+    expect(first.data.session.speech_readiness).toBe(state);
+    expect(second.data.session.speech_readiness).toBe(state);
+  }
+  expect(mocks.sound).not.toHaveBeenCalled();
+  first.dispose();
+  second.dispose();
+});
 it('does not replace a settings broadcast with an older bootstrap snapshot', async () => {
   let resolve!: (value: unknown) => void;
   let settingsChanged!: (value: unknown) => void;

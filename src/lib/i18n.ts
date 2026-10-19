@@ -102,6 +102,16 @@ const en = {
   adbPath: 'ADB executable (optional)',
   chooseAdb: 'Choose ADB executable',
   successSound: 'Play a sound on success',
+  readySound: 'Play the ready-to-speak cue',
+  readyDelay: 'Speech-readiness delay after confirmation (milliseconds)',
+  readyDelayHelp:
+    'The delay starts after confirmation and changes apply to the next Start. Reduce it only after checking the first words on this phone.',
+  preparingToSpeak: 'Preparing to speak',
+  readyToSpeak: 'Ready to speak',
+  ready_sound_failed:
+    'The ready-to-speak cue could not be played. Check your PC audio output.',
+  feedback_sound_failed:
+    'The feedback sound could not be played. Check your PC audio output.',
   failureSoundHelp:
     'Failures always use a distinct sound. Results remain available as ordinary text.',
   verification: 'Verification deadline (seconds)',
@@ -233,6 +243,16 @@ const ar: Record<keyof typeof en, string> = {
   adbPath: 'مسار برنامج ADB (اختياري)',
   chooseAdb: 'اختيار برنامج ADB',
   successSound: 'تشغيل صوت عند النجاح',
+  readySound: 'تشغيل صفارة الجاهزية للكلام',
+  readyDelay: 'مهلة الجاهزية للكلام بعد التأكيد (مللي ثانية)',
+  readyDelayHelp:
+    'تبدأ المهلة بعد تأكيد بدء التصوير، وتسري تغييراتها من اللقطة التالية. لا تقللها إلا بعد مراجعة أول كلماتك في تسجيل من هذا الهاتف.',
+  preparingToSpeak: 'جارٍ التجهيز للكلام',
+  readyToSpeak: 'جاهز للكلام',
+  ready_sound_failed:
+    'تعذر تشغيل صفارة الجاهزية للكلام. تحقق من مخرج الصوت في الكمبيوتر.',
+  feedback_sound_failed:
+    'تعذر تشغيل صوت التنبيه. تحقق من مخرج الصوت في الكمبيوتر.',
   failureSoundHelp: 'الفشل له صوت مختلف دائمًا. النتائج متاحة كنص عادي.',
   verification: 'مهلة التحقق بالثواني',
   saveSettings: 'حفظ الإعدادات',
