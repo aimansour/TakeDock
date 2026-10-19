@@ -1,6 +1,7 @@
 use crate::{
     adb::{self, Adb, ProcessHandle},
     model::*,
+    readiness::{ReadinessPolicy, ReadyToken},
     recording::RecordingMachine,
 };
 use sha2::{Digest, Sha256};
@@ -105,11 +106,13 @@ impl Shared {
     }
     fn disconnect(&self, condition: &str) {
         let generation = NEXT_GENERATION.fetch_add(1, Ordering::AcqRel);
-        self.generation.store(generation, Ordering::Release);
         let active = self.active.lock().unwrap().take();
         {
             let mut model = self.model.lock().unwrap();
+            let policy = model.readiness_policy;
+            self.generation.store(generation, Ordering::Release);
             *model = RecordingMachine::new(String::new(), generation);
+            model.set_readiness_policy(policy);
             model.state.connected = false;
             model.state.condition = condition.into();
         }
@@ -157,7 +160,6 @@ impl Shared {
     }
     fn connect(self: &Arc<Self>, serial: String) -> Result<(), String> {
         let generation = NEXT_GENERATION.fetch_add(1, Ordering::AcqRel);
-        self.generation.store(generation, Ordering::Release);
         let token = uuid::Uuid::new_v4().to_string();
         let lease = DeviceLease {
             adb: self.adb.clone(),
@@ -173,7 +175,11 @@ impl Shared {
             processes: Vec::new(),
         });
         {
-            *self.model.lock().unwrap() = RecordingMachine::new(token.clone(), generation);
+            let mut model = self.model.lock().unwrap();
+            let policy = model.readiness_policy;
+            self.generation.store(generation, Ordering::Release);
+            *model = RecordingMachine::new(token.clone(), generation);
+            model.set_readiness_policy(policy);
         }
         self.state();
         let hash = Sha256::digest(std::fs::read(&self.apk).map_err(|error| error.to_string())?)
@@ -299,7 +305,11 @@ impl Shared {
                         if value["type"] == "state" {
                             match serde_json::from_value::<Observation>(value) {
                                 Ok(observation) => {
-                                    let results = shared.model.lock().unwrap().observe(observation);
+                                    let results = shared
+                                        .model
+                                        .lock()
+                                        .unwrap()
+                                        .observe(observation, shared.now());
                                     shared.results(results);
                                     shared.state();
                                 }
@@ -322,6 +332,7 @@ impl Shared {
                 model.state.observer_ready = false;
                 model.state.predicted = RecordingState::Unknown;
                 model.state.condition = "observer_closed".into();
+                model.invalidate_speech_readiness();
                 drop(model);
                 shared.error("observer_closed", "");
                 shared.state();
@@ -348,6 +359,10 @@ impl Engine {
         }
         let generation = NEXT_GENERATION.fetch_add(1, Ordering::AcqRel);
         let mut model = RecordingMachine::new(String::new(), generation);
+        model.set_readiness_policy(ReadinessPolicy {
+            sound: settings.ready_sound,
+            delay_ms: settings.ready_delay_ms,
+        });
         model.state.connected = false;
         model.state.condition = "searching".into();
         let shared = Arc::new(Shared {
@@ -365,10 +380,21 @@ impl Engine {
         let timer = shared.clone();
         let timer_worker = thread::spawn(move || {
             while !timer.stopped.load(Ordering::Acquire) {
-                let results = timer.model.lock().unwrap().expire(timer.now());
+                let (results, changed, cue) = {
+                    let mut model = timer.model.lock().unwrap();
+                    let now = timer.now();
+                    let results = model.expire(now);
+                    let (changed, cue) = model.poll_speech_readiness(now);
+                    (results, changed, cue)
+                };
                 if !results.is_empty() {
                     timer.results(results);
                     timer.state();
+                } else if changed {
+                    timer.state();
+                }
+                if let Some(token) = cue {
+                    (timer.sink)("speech-ready", serde_json::to_value(token).unwrap());
                 }
                 thread::sleep(Duration::from_millis(25));
             }
@@ -430,6 +456,7 @@ impl Engine {
                         model.state.observer_ready = false;
                         model.state.predicted = RecordingState::Unknown;
                         model.state.condition = "observer_setup_failed".into();
+                        model.invalidate_speech_readiness();
                         drop(model);
                         tracker.state();
                         tracker.error("observer_setup_failed", &error);
@@ -474,18 +501,27 @@ impl Engine {
         action: RecordingAction,
         generation: u64,
     ) -> Result<CommandReceipt, String> {
-        let active = self.shared.active.lock().unwrap();
-        let active = active.as_ref().ok_or("no_device")?;
+        let active_guard = self.shared.active.lock().unwrap();
+        let active = active_guard.as_ref().ok_or("no_device")?;
         if active.lease.generation != generation || !self.shared.current(generation) {
             return Err("session_replaced".into());
         }
         let mut model = self.shared.model.lock().unwrap();
         let previous = model.clone();
-        let receipt = model.dispatch(
+        let receipt = match model.dispatch(
             action,
             self.shared.now(),
             self.shared.settings.verification_ms,
-        )?;
+        ) {
+            Ok(receipt) => receipt,
+            Err(error) => {
+                let state = model.snapshot_for_event();
+                drop(model);
+                drop(active_guard);
+                (self.shared.sink)("session-state", serde_json::to_value(state).unwrap());
+                return Err(error);
+            }
+        };
         if active
             .sender
             .try_send(QueuedCommand {
@@ -495,11 +531,39 @@ impl Engine {
             .is_err()
         {
             *model = previous;
+            model.invalidate_speech_readiness();
+            let state = model.snapshot_for_event();
+            drop(model);
+            drop(active_guard);
+            (self.shared.sink)("session-state", serde_json::to_value(state).unwrap());
             return Err("command_queue_unavailable".into());
         }
+        let state = model.snapshot_for_event();
         drop(model);
-        self.shared.state();
+        drop(active_guard);
+        (self.shared.sink)("session-state", serde_json::to_value(state).unwrap());
         Ok(receipt)
+    }
+    pub fn set_readiness_policy(&self, policy: ReadinessPolicy) {
+        self.shared
+            .model
+            .lock()
+            .unwrap()
+            .set_readiness_policy(policy);
+    }
+    pub fn invalidate_speech_readiness(&self) {
+        let mut model = self.shared.model.lock().unwrap();
+        model.invalidate_speech_readiness();
+        let state = model.snapshot_for_event();
+        drop(model);
+        (self.shared.sink)("session-state", serde_json::to_value(state).unwrap());
+    }
+    pub fn claim_ready_cue(&self, token: &ReadyToken) -> bool {
+        let mut model = self.shared.model.lock().unwrap();
+        if model.state.generation != token.generation || !self.shared.current(token.generation) {
+            return false;
+        }
+        model.claim_ready_cue(token)
     }
     pub fn shutdown(&self) {
         if self.shared.stopped.swap(true, Ordering::AcqRel) {
@@ -521,4 +585,86 @@ impl Drop for Engine {
 }
 pub fn shell_quote(text: &str) -> String {
     format!("'{}'", text.replace('\'', "'\\''"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn queue_failure_cannot_resurrect_readiness() {
+        let generation = NEXT_GENERATION.fetch_add(1, Ordering::AcqRel);
+        let mut model = RecordingMachine::new("queue-test".into(), generation);
+        let observation = |seq, state| Observation {
+            version: 1,
+            session: "queue-test".into(),
+            seq,
+            event_time: seq * 100,
+            foreground: true,
+            video_mode: true,
+            state,
+        };
+        model.observe(observation(1, RecordingState::Idle), 0);
+        model.dispatch(RecordingAction::Start, 0, 10_000).unwrap();
+        model.observe(observation(2, RecordingState::Recording), 100);
+        let token = model.poll_speech_readiness(900).1.unwrap();
+        let (sender, _receiver) = mpsc::sync_channel(1);
+        sender
+            .try_send(QueuedCommand {
+                sequence: 0,
+                action: RecordingAction::Start,
+            })
+            .unwrap();
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let output = events.clone();
+        let adb = Adb {
+            path: PathBuf::from("unused-test-peer"),
+        };
+        let engine = Engine {
+            shared: Arc::new(Shared {
+                adb: adb.clone(),
+                apk: PathBuf::new(),
+                settings: Settings::default(),
+                sink: Arc::new(move |event, value| {
+                    output.lock().unwrap().push((event.to_owned(), value));
+                }),
+                model: Mutex::new(model),
+                active: Mutex::new(Some(Active {
+                    lease: DeviceLease {
+                        adb,
+                        serial: "fixture-queue".into(),
+                        generation,
+                        cancelled: Arc::new(AtomicBool::new(false)),
+                    },
+                    token: "queue-test".into(),
+                    sender,
+                    processes: Vec::new(),
+                })),
+                stopped: AtomicBool::new(false),
+                generation: AtomicU64::new(generation),
+                processes: Mutex::new(Vec::new()),
+                started: Instant::now(),
+            }),
+            workers: Mutex::new(Vec::new()),
+        };
+        assert_eq!(
+            engine
+                .dispatch_for(RecordingAction::Stop, generation)
+                .unwrap_err(),
+            "command_queue_unavailable"
+        );
+        let snapshot = engine.snapshot();
+        assert_eq!(snapshot.predicted, RecordingState::Recording);
+        assert_eq!(snapshot.command_sequence, 1);
+        assert_eq!(snapshot.speech_readiness, SpeechReadiness::Inactive);
+        assert!(!engine.claim_ready_cue(&token));
+        assert!(
+            events
+                .lock()
+                .unwrap()
+                .iter()
+                .any(|(event, value)| event == "session-state"
+                    && value["speech_readiness"] == "inactive")
+        );
+    }
 }

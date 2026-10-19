@@ -68,6 +68,8 @@ pub struct Observation {
 pub struct VerificationResult {
     pub generation: u64,
     pub sequence: u64,
+    pub action: RecordingAction,
+    pub suppress_success_sound: bool,
     pub status: String,
     pub message: String,
 }

@@ -69,33 +69,204 @@ fn a_closed_capture_shell_removes_controls_even_when_observer_keeps_emitting() {
 #[test]
 fn commands_reach_a_real_persistent_process_while_observation_is_held() {
     let (directory, adb_path) = fixture();
+    let cues = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let output = cues.clone();
     let engine = Engine::start(
         Settings {
             adb_path,
             ..Default::default()
         },
         directory.path().join("observer.apk"),
-        Arc::new(|_, _| {}),
+        Arc::new(move |event, _| {
+            if event == "speech-ready" {
+                output.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            }
+        }),
     )
     .unwrap();
     wait_until(|| engine.snapshot().predicted == RecordingState::Idle);
     std::fs::write(directory.path().join("hold-observation"), b"").unwrap();
     engine.dispatch(RecordingAction::Start).unwrap();
     engine.dispatch(RecordingAction::Pause).unwrap();
+    engine.dispatch(RecordingAction::Resume).unwrap();
+    engine.dispatch(RecordingAction::Stop).unwrap();
     wait_until(|| {
         std::fs::read_to_string(directory.path().join("commands.jsonl"))
             .unwrap_or_default()
             .lines()
             .count()
-            == 2
+            == 4
     });
-    assert_eq!(engine.snapshot().predicted, RecordingState::Paused);
+    assert_eq!(engine.snapshot().predicted, RecordingState::Idle);
     assert_eq!(engine.snapshot().observed, RecordingState::Idle);
-    assert_eq!(engine.snapshot().pending, 2);
+    assert_eq!(engine.snapshot().pending, 4);
+    assert_eq!(
+        engine.snapshot().speech_readiness,
+        takedock_lib::model::SpeechReadiness::Inactive
+    );
+    assert_eq!(cues.load(std::sync::atomic::Ordering::SeqCst), 0);
     std::fs::remove_file(directory.path().join("hold-observation")).unwrap();
-    wait_until(|| engine.snapshot().observed == RecordingState::Paused);
+    // The final idle state is unchanged from the Observer's previous idle;
+    // ordered evidence is intentionally still held/unconfirmed.
     engine.shutdown();
     wait_until(|| directory.path().join("observer-stopped").exists());
+}
+
+#[test]
+fn confirmed_start_emits_one_cue_and_retired_engine_cannot_claim_it() {
+    use takedock_lib::{model::SpeechReadiness, readiness::ReadyToken};
+    let (directory, adb_path) = fixture();
+    let cues = Arc::new(std::sync::Mutex::new(Vec::<ReadyToken>::new()));
+    let output = cues.clone();
+    let engine = Engine::start(
+        Settings {
+            adb_path,
+            ready_delay_ms: 500,
+            ..Default::default()
+        },
+        directory.path().join("observer.apk"),
+        Arc::new(move |event, payload| {
+            if event == "speech-ready" {
+                output
+                    .lock()
+                    .unwrap()
+                    .push(serde_json::from_value(payload).unwrap());
+            }
+        }),
+    )
+    .unwrap();
+    wait_until(|| engine.snapshot().predicted == RecordingState::Idle);
+    engine.dispatch(RecordingAction::Start).unwrap();
+    wait_until(|| !cues.lock().unwrap().is_empty());
+    assert_eq!(engine.snapshot().speech_readiness, SpeechReadiness::Ready);
+    let token = cues.lock().unwrap()[0].clone();
+    assert!(engine.claim_ready_cue(&token));
+    assert!(!engine.claim_ready_cue(&token));
+    engine.dispatch(RecordingAction::Stop).unwrap();
+    wait_until(|| engine.snapshot().observed == RecordingState::Idle);
+    engine.dispatch(RecordingAction::Start).unwrap();
+    wait_until(|| cues.lock().unwrap().len() == 2);
+    let unclaimed = cues.lock().unwrap()[1].clone();
+    assert_ne!(token.id, unclaimed.id);
+    engine.shutdown();
+    assert_eq!(cues.lock().unwrap().len(), 2);
+    assert!(!engine.claim_ready_cue(&unclaimed));
+    let next = Engine::start(
+        Settings {
+            adb_path: directory
+                .path()
+                .join(if cfg!(windows) { "adb.exe" } else { "adb" })
+                .to_str()
+                .unwrap()
+                .into(),
+            ..Default::default()
+        },
+        directory.path().join("observer.apk"),
+        Arc::new(|_, _| {}),
+    )
+    .unwrap();
+    wait_until(|| next.snapshot().predicted == RecordingState::Recording);
+    assert_eq!(next.snapshot().speech_readiness, SpeechReadiness::Inactive);
+    assert!(!next.claim_ready_cue(&unclaimed));
+    next.dispatch(RecordingAction::Stop).unwrap();
+    wait_until(|| next.snapshot().observed == RecordingState::Idle);
+    next.shutdown();
+}
+
+#[test]
+fn reconnect_keeps_updated_policy_without_replaying_an_existing_recording() {
+    use takedock_lib::{model::SpeechReadiness, readiness::ReadinessPolicy};
+    let (directory, adb_path) = fixture();
+    let cues = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let output = cues.clone();
+    let engine = Engine::start(
+        Settings {
+            adb_path,
+            ..Default::default()
+        },
+        directory.path().join("observer.apk"),
+        Arc::new(move |event, _| {
+            if event == "speech-ready" {
+                output.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            }
+        }),
+    )
+    .unwrap();
+    wait_until(|| engine.snapshot().predicted == RecordingState::Idle);
+    engine.set_readiness_policy(ReadinessPolicy {
+        sound: false,
+        delay_ms: 500,
+    });
+    engine.dispatch(RecordingAction::Start).unwrap();
+    wait_until(|| engine.snapshot().speech_readiness == SpeechReadiness::Ready);
+    let generation = engine.snapshot().generation;
+    std::fs::write(directory.path().join("devices.txt"), "").unwrap();
+    wait_until(|| !engine.snapshot().connected);
+    std::fs::write(
+        directory.path().join("devices.txt"),
+        "fixture-one\tdevice\n",
+    )
+    .unwrap();
+    wait_until(|| engine.snapshot().predicted == RecordingState::Recording);
+    assert!(engine.snapshot().generation > generation);
+    assert_eq!(
+        engine.snapshot().speech_readiness,
+        SpeechReadiness::Inactive
+    );
+    engine.dispatch(RecordingAction::Stop).unwrap();
+    wait_until(|| engine.snapshot().observed == RecordingState::Idle);
+    engine.dispatch(RecordingAction::Start).unwrap();
+    wait_until(|| engine.snapshot().speech_readiness == SpeechReadiness::Ready);
+    engine.shutdown();
+    assert_eq!(cues.load(std::sync::atomic::Ordering::SeqCst), 0);
+}
+
+#[test]
+fn ready_settings_apply_without_reconnect() {
+    use takedock_lib::{
+        model::SpeechReadiness,
+        readiness::{ReadinessPolicy, ReadyToken},
+    };
+    let (directory, adb_path) = fixture();
+    let cues = Arc::new(std::sync::Mutex::new(Vec::<ReadyToken>::new()));
+    let output = cues.clone();
+    let engine = Engine::start(
+        Settings {
+            adb_path,
+            ..Default::default()
+        },
+        directory.path().join("observer.apk"),
+        Arc::new(move |event, payload| {
+            if event == "speech-ready" {
+                output
+                    .lock()
+                    .unwrap()
+                    .push(serde_json::from_value(payload).unwrap());
+            }
+        }),
+    )
+    .unwrap();
+    wait_until(|| engine.snapshot().predicted == RecordingState::Idle);
+    let generation = engine.snapshot().generation;
+    engine.dispatch(RecordingAction::Start).unwrap();
+    wait_until(|| engine.snapshot().observed == RecordingState::Recording);
+    engine.set_readiness_policy(ReadinessPolicy {
+        sound: false,
+        delay_ms: 500,
+    });
+    engine.set_readiness_policy(ReadinessPolicy {
+        sound: true,
+        delay_ms: 500,
+    });
+    wait_until(|| engine.snapshot().speech_readiness == SpeechReadiness::Ready);
+    assert!(cues.lock().unwrap().is_empty());
+    engine.dispatch(RecordingAction::Stop).unwrap();
+    wait_until(|| engine.snapshot().observed == RecordingState::Idle);
+    engine.dispatch(RecordingAction::Start).unwrap();
+    wait_until(|| !cues.lock().unwrap().is_empty());
+    assert_eq!(engine.snapshot().generation, generation);
+    assert_eq!(cues.lock().unwrap()[0].start_sequence, 3);
+    engine.shutdown();
 }
 #[test]
 fn multiple_devices_remove_the_session_instead_of_selecting_arbitrarily() {
