@@ -63,8 +63,8 @@ fast-Stop prerequisite are in the
 - Produces matching TS `SpeechReadiness`, `SessionState.speech_readiness`, and settings fields; `initialSession` uses `inactive` and `defaultSettings` uses `true`/`800`.
 - Existing `settings::load` and `settings::save` signatures remain unchanged; validation rejects delays outside 500–5000 or not divisible by 50 with `invalid_settings`.
 
-- [ ] **Step 1: Establish the execution checkout and baseline.** After plan approval/method selection, use `superpowers:using-git-worktrees`, inspect applicable instructions, and start from this branch's approved spec/plan commits. Install missing compatible build tools rather than weakening checks. Run `npm ci`, then `cargo test --workspace --locked`, `npm run check`, and `npm run test:ui`; record any pre-existing failure before changes.
-- [ ] **Step 2: Write failing legacy/default and validation tests in `settings.rs`.** Assert loading JSON with only the five old fields preserves all five, adds `ready_sound == true` and `ready_delay_ms == 800`; edited `false`/`1250` survives save/load. For `499`, `501`, `525`, and `5001`, save must fail and retain the last good bytes. `500`, `800`, and `5000` must pass. Assert default session readiness serializes as `"inactive"`.
+- [x] **Step 1: Establish the execution checkout and baseline.** After plan approval/method selection, use `superpowers:using-git-worktrees`, inspect applicable instructions, and start from this branch's approved spec/plan commits. Install missing compatible build tools rather than weakening checks. Run `npm ci`, then `cargo test --workspace --locked`, `npm run check`, and `npm run test:ui`; record any pre-existing failure before changes.
+- [x] **Step 2: Write failing legacy/default and validation tests in `settings.rs`.** Assert loading JSON with only the five old fields preserves all five, adds `ready_sound == true` and `ready_delay_ms == 800`; edited `false`/`1250` survives save/load. For `499`, `501`, `525`, and `5001`, save must fail and retain the last good bytes. `500`, `800`, and `5000` must pass. Assert default session readiness serializes as `"inactive"`.
 
 ```rust
 #[test]
@@ -77,10 +77,10 @@ fn legacy_settings_default_readiness_without_replacing_language() {
 }
 ```
 
-- [ ] **Step 3: Run `cargo test -p takedock --lib settings --locked`.** Expected RED: the new fields/type or checks are missing, not an unrelated environment failure.
-- [ ] **Step 4: Add the contracts and validation above.** Update required TS literals without adding UI behavior yet.
-- [ ] **Step 5: Run the focused Rust tests and `npm run check`.** Expected PASS, with no Svelte/TS diagnostics. Run `cargo fmt --all --check` after formatting changed Rust.
-- [ ] **Step 6: Commit** `feat: persist speech-readiness settings and state`, staging only this task's contracts/tests.
+- [x] **Step 3: Run `cargo test -p takedock --lib settings --locked`.** Expected RED: the new fields/type or checks are missing, not an unrelated environment failure.
+- [x] **Step 4: Add the contracts and validation above.** Update required TS literals without adding UI behavior yet.
+- [x] **Step 5: Run the focused Rust tests and `npm run check`.** Expected PASS, with no Svelte/TS diagnostics. Run `cargo fmt --all --check` after formatting changed Rust.
+- [x] **Step 6: Commit** `feat: persist speech-readiness settings and state`, staging only this task's contracts/tests.
 
 ## Task 2: Implement the pure readiness state machine
 
@@ -107,7 +107,7 @@ impl Readiness {
 
 `ReadinessPolicy` is Copy/Clone; `Readiness` is Clone; `ReadyToken` is Clone/Debug/PartialEq/Eq/Serialize/Deserialize. Tests supply deterministic token IDs. `begin` rejects a foreign generation without mutation. `poll` updates state even if it returns no audible cue. A successful `claim` consumes playback permission once.
 
-- [ ] **Step 1: Write deterministic tests with explicit clock values.** Use an eligible recording `SessionState` at generation 7, sequence 1, zero pending. Begin token `one` with sound on/800 ms; polling at 10,000 before confirmation returns none; confirm sequence 1 at 20,000; poll 20,799 returns none/preparing; poll 20,800 returns token one/ready; repeated poll returns none; claim succeeds once then fails. Reconfirm at 20,400 must not shift the deadline.
+- [x] **Step 1: Write deterministic tests with explicit clock values.** Use an eligible recording `SessionState` at generation 7, sequence 1, zero pending. Begin token `one` with sound on/800 ms; polling at 10,000 before confirmation returns none; confirm sequence 1 at 20,000; poll 20,799 returns none/preparing; poll 20,800 returns token one/ready; repeated poll returns none; claim succeeds once then fails. Reconfirm at 20,400 must not shift the deadline.
 
 ```rust
 #[test]
@@ -134,11 +134,11 @@ fn deadline_begins_at_confirmation_and_cue_is_claimed_once() {
 }
 ```
 
-- [ ] **Step 2: Add cancellation/policy assertions.** `cancel`, foreign generation, later command sequence, stop, pause, and loss of eligibility prevent claim. `unknown_before_confirmation_may_recover` stays preparing and may confirm later; `unknown_after_confirmation_cancels_permanently` cannot recover a cue. `disable_then_reenable_does_not_revive_current_cue` asserts disabling between enqueue/claim makes claim false while visual state can become ready; creating another policy must not restore the old token. Sound-off starts become visually ready without a cue. Test 500/5000 ms guards and saturating deadline arithmetic near `u64::MAX`.
-- [ ] **Step 3: Run `cargo test -p takedock --lib readiness --locked`.** Expected RED for the absent state machine.
-- [ ] **Step 4: Implement the interfaces using a private waiting/warming/ready candidate.** Reconciliation checks generation, latest command, eligibility, predicted/observed recording and absence of later pending capture. Do not use wall-clock time, sleeping threads, or sound APIs here.
-- [ ] **Step 5: Run the readiness tests.** Expected PASS deterministically without a phone or audio device.
-- [ ] **Step 6: Commit** `feat: model confirmed speech-readiness deadlines and cancellation`.
+- [x] **Step 2: Add cancellation/policy assertions.** `cancel`, foreign generation, later command sequence, stop, pause, and loss of eligibility prevent claim. `unknown_before_confirmation_may_recover` stays preparing and may confirm later; `unknown_after_confirmation_cancels_permanently` cannot recover a cue. `disable_then_reenable_does_not_revive_current_cue` asserts disabling between enqueue/claim makes claim false while visual state can become ready; creating another policy must not restore the old token. Sound-off starts become visually ready without a cue. Test 500/5000 ms guards and saturating deadline arithmetic near `u64::MAX`.
+- [x] **Step 3: Run `cargo test -p takedock --lib readiness --locked`.** Expected RED for the absent state machine.
+- [x] **Step 4: Implement the interfaces using a private waiting/warming/ready candidate.** Reconciliation checks generation, latest command, eligibility, predicted/observed recording and absence of later pending capture. Do not use wall-clock time, sleeping threads, or sound APIs here.
+- [x] **Step 5: Run the readiness tests.** Expected PASS deterministically without a phone or audio device.
+- [x] **Step 6: Commit** `feat: model confirmed speech-readiness deadlines and cancellation`.
 
 ## Task 3: Bind readiness to actual capture causality
 
@@ -152,7 +152,7 @@ fn deadline_begins_at_confirmation_and_cue_is_claimed_once() {
 - Add `VerificationResult.action: RecordingAction` and `suppress_success_sound: bool`, captured in each `Pending` entry. Existing frontend consumers tolerate the additional fields.
 - Emit `speech-ready` with serialized `ReadyToken` only once; `session-state` carries the ordinary readiness state. `Engine::start` keeps its current three-argument signature.
 
-- [ ] **Step 1: Write failing model and process regression tests.** `confirmed_start_arms_readiness_but_resume_does_not`, `superseded_confirmation_never_arms_readiness`, `queue_failure_cannot_resurrect_readiness`, and `ready_settings_apply_without_reconnect` assert the spec's ordering. For queue failure, use a private `#[cfg(test)]` session harness with a full one-slot command channel, an eligible recording model and an armed token; call the actual `Engine::dispatch_for(Stop, generation)` and assert capture prediction rolls back while readiness becomes inactive and the token cannot be claimed. Do not add production control IPC. In `events.rs`, assert a confirmed Start with `suppress_success_sound: true` produces no generic tone, duplicates remain silent, and failures/other actions retain their feedback.
+- [x] **Step 1: Write failing model and process regression tests.** `confirmed_start_arms_readiness_but_resume_does_not`, `superseded_confirmation_never_arms_readiness`, `queue_failure_cannot_resurrect_readiness`, and `ready_settings_apply_without_reconnect` assert the spec's ordering. For queue failure, use a private `#[cfg(test)]` session harness with a full one-slot command channel, an eligible recording model and an armed token; call the actual `Engine::dispatch_for(Stop, generation)` and assert capture prediction rolls back while readiness becomes inactive and the token cannot be claimed. Do not add production control IPC. In `events.rs`, assert a confirmed Start with `suppress_success_sound: true` produces no generic tone, duplicates remain silent, and failures/other actions retain their feedback.
 
 ```rust
 #[test]
@@ -166,12 +166,12 @@ fn confirmed_start_does_not_play_early_success_feedback() {
 }
 ```
 
-- [ ] **Step 2: Extend the existing process fixture tests.** Hold observation, dispatch Start/Pause/Resume/Stop, and assert all four commands reach `commands.jsonl` before release, with no `speech-ready` event. For a normally confirmed Start, wait for exactly one event and ready state; engine claim succeeds once. Disable then re-enable before the deadline and assert no current-take cue; a later Start uses the new settings. Assert reconnect/retired generations cannot claim old tokens.
-- [ ] **Step 3: Run** `cargo test -p takedock --lib recording --locked`, `cargo test -p takedock --lib session --locked`, `cargo test -p takedock --lib events --locked`, and `cargo test -p takedock-adb-fixture --test session --locked`. Expected RED for missing readiness behavior/interfaces.
-- [ ] **Step 4: Integrate the lifecycle.** Generate each production token ID with the already-used `uuid` crate. Begin a candidate while queueing Start under the model lock; a failed enqueue must restore capture state and then invalidate readiness before unlocking. Emit any resulting state outside locks. Record the Start's sound-enabled snapshot for generic-feedback suppression.
-- [ ] **Step 5: Extend the existing 25 ms session timer.** Collect expiry results, readiness state changes, and a possible cue under one model lock; emit effects afterward. Cancel through all spec boundaries, including channel failure, lost eligibility, shutdown and generation replacement. A transient unknown before confirmation waits; one after confirmation cancels. Engine claims recheck the current generation while holding the authoritative model lock.
-- [ ] **Step 6: Run all Task 3 commands and `cargo test --workspace --locked`.** Expected PASS; no capture retry or verification/audio wait enters the command dispatch path.
-- [ ] **Step 7: Commit** `feat: integrate speech readiness with capture verification`.
+- [x] **Step 2: Extend the existing process fixture tests.** Hold observation, dispatch Start/Pause/Resume/Stop, and assert all four commands reach `commands.jsonl` before release, with no `speech-ready` event. For a normally confirmed Start, wait for exactly one event and ready state; engine claim succeeds once. Disable then re-enable before the deadline and assert no current-take cue; a later Start uses the new settings. Assert reconnect/retired generations cannot claim old tokens.
+- [x] **Step 3: Run** `cargo test -p takedock --lib recording --locked`, `cargo test -p takedock --lib session --locked`, `cargo test -p takedock --lib events --locked`, and `cargo test -p takedock-adb-fixture --test session --locked`. Expected RED for missing readiness behavior/interfaces.
+- [x] **Step 4: Integrate the lifecycle.** Generate each production token ID with the already-used `uuid` crate. Begin a candidate while queueing Start under the model lock; a failed enqueue must restore capture state and then invalidate readiness before unlocking. Emit any resulting state outside locks. Record the Start's sound-enabled snapshot for generic-feedback suppression.
+- [x] **Step 5: Extend the existing 25 ms session timer.** Collect expiry results, readiness state changes, and a possible cue under one model lock; emit effects afterward. Cancel through all spec boundaries, including channel failure, lost eligibility, shutdown and generation replacement. A transient unknown before confirmation waits; one after confirmation cancels. Engine claims recheck the current generation while holding the authoritative model lock.
+- [x] **Step 6: Run all Task 3 commands and `cargo test --workspace --locked`.** Expected PASS; no capture retry or verification/audio wait enters the command dispatch path.
+- [x] **Step 7: Commit** `feat: integrate speech readiness with capture verification`.
 
 ## Task 4: Serialize and validate native audio playback
 
@@ -196,8 +196,8 @@ pub fn play_system_tone(tone: Tone) -> Result<(), String>;
 
 `Tone` is Copy/Clone. A mutex/condition-variable queue holds at most one newest ready token, sixteen failure requests, and one coalesced optional success. After the current tone, process ready, then failure, then success. Ready token replacement compares `(generation, start_sequence)` so late older events cannot displace newer candidates.
 
-- [ ] **Step 1: Write failing audio tests using injected players and explicit barriers.** Assert one playback despite duplicate events; `older_ready_event_cannot_replace_newer_pending_cue`; cancellation/disable then re-enable while the player is held prevents the pending cue; readiness precedes queued optional success; shutdown clears unplayed cues. Do not assert scheduler behavior using short sleeps.
-- [ ] **Step 2: Pin failure and dispatch independence.** A fake player returning an error must invoke the ordinary-error callback once for that ready token, make no retry, and never enqueue a failure tone through that callback. Hold a currently playing tone and prove capture commands still reach the real fixture process. These tests must not play actual sound.
+- [x] **Step 1: Write failing audio tests using injected players and explicit barriers.** Assert one playback despite duplicate events; `older_ready_event_cannot_replace_newer_pending_cue`; cancellation/disable then re-enable while the player is held prevents the pending cue; readiness precedes queued optional success; shutdown clears unplayed cues. Do not assert scheduler behavior using short sleeps.
+- [x] **Step 2: Pin failure and dispatch independence.** A fake player returning an error must invoke the ordinary-error callback once for that ready token, make no retry, and never enqueue a failure tone through that callback. Hold a currently playing tone and prove capture commands still reach the real fixture process. These tests must not play actual sound.
 
 ```rust
 #[test]
@@ -219,12 +219,12 @@ fn failed_ready_tone_reports_once_without_audio_retry() {
 }
 ```
 
-- [ ] **Step 3: Run `cargo test -p takedock --lib audio --locked` and the process session tests.** Expected RED for the absent dispatcher/behavior.
-- [ ] **Step 4: Implement the dispatcher and system backend.** Recheck/claim only immediately before playback; never hold queue/model/settings locks while calling the player. Preserve existing success notes `(880,60),(1175,90)` and failure notes `(330,110),(220,160)`; SpeechReady is `(1100,100)`. Check Windows `Beep` failure. The non-Windows backend returns `sound_output_unavailable`; injected players keep portable tests independent of hardware.
-- [ ] **Step 5: Wire the process-owned runtime.** Make `Runtime.engine` an `Arc<RwLock<Option<Arc<Engine>>>>`, created before the event sink. The audio claim callback holds a Weak reference to that slot, clones the current Engine under the read lock, releases the slot lock, then calls its claim method. This avoids ownership cycles and holding runtime locks during playback.
-- [ ] **Step 6: Route existing feedback and new ready events through this dispatcher.** Replace spawning one audio thread per feedback. `play_feedback` still honors the success preference. Serialize settings save with engine replacement using the existing reconnect mutex: acquire reconnect, then settings, persist/update settings, clone the current engine from the slot and release the slot lock, update policy, then broadcast under settings serialization. Reconnect/shutdown must extract an old engine from the slot in a separate scope before calling or joining it; never hold the slot while acquiring settings/model locks or playing/joining audio. This preserves authoritative settings ordering and prevents a newly replaced engine using an older policy. Readiness audio failures emit `operation-error` with `ready_sound_failed` directly through the app handle, bypassing the sound-generating event sink to prevent recursion. Deduplicate continuous generic audio failures with `feedback_sound_failed`; do not claim they were heard. Join the worker at shutdown after invalidating engine state.
-- [ ] **Step 7: Run the focused audio/process tests and the workspace suite.** Expected PASS with no audible hardware dependency.
-- [ ] **Step 8: Commit** `feat: dispatch readiness audio once with cancellation checks`.
+- [x] **Step 3: Run `cargo test -p takedock --lib audio --locked` and the process session tests.** Expected RED for the absent dispatcher/behavior.
+- [x] **Step 4: Implement the dispatcher and system backend.** Recheck/claim only immediately before playback; never hold queue/model/settings locks while calling the player. Preserve existing success notes `(880,60),(1175,90)` and failure notes `(330,110),(220,160)`; SpeechReady is `(1100,100)`. Check Windows `Beep` failure. The non-Windows backend returns `sound_output_unavailable`; injected players keep portable tests independent of hardware.
+- [x] **Step 5: Wire the process-owned runtime.** Make `Runtime.engine` an `Arc<RwLock<Option<Arc<Engine>>>>`, created before the event sink. The audio claim callback holds a Weak reference to that slot, clones the current Engine under the read lock, releases the slot lock, then calls its claim method. This avoids ownership cycles and holding runtime locks during playback.
+- [x] **Step 6: Route existing feedback and new ready events through this dispatcher.** Replace spawning one audio thread per feedback. `play_feedback` still honors the success preference. Serialize settings save with engine replacement using the existing reconnect mutex: acquire reconnect, then settings, persist/update settings, clone the current engine from the slot and release the slot lock, update policy, then broadcast under settings serialization. Reconnect/shutdown must extract an old engine from the slot in a separate scope before calling or joining it; never hold the slot while acquiring settings/model locks or playing/joining audio. This preserves authoritative settings ordering and prevents a newly replaced engine using an older policy. Readiness audio failures emit `operation-error` with `ready_sound_failed` directly through the app handle, bypassing the sound-generating event sink to prevent recursion. Deduplicate continuous generic audio failures with `feedback_sound_failed`; do not claim they were heard. Join the worker at shutdown after invalidating engine state.
+- [x] **Step 7: Run the focused audio/process tests and the workspace suite.** Expected PASS with no audible hardware dependency.
+- [x] **Step 8: Commit** `feat: dispatch readiness audio once with cancellation checks`.
 
 ## Task 5: Expose bilingual readiness and independent controls
 
@@ -232,8 +232,8 @@ fn failed_ready_tone_reports_once_without_audio_retry() {
 
 **Interfaces:** Consumes backend `SessionState.speech_readiness` and Task 1 settings. Adds ordinary paragraph `#speech-readiness` with `data-readiness="preparing"` or `"ready"`; omit it for inactive. Add inputs `#ready-sound`, `#ready-delay` and stable `#success-sound`; retain the current SettingsPanel callbacks and form submission API.
 
-- [ ] **Step 1: Write failing component tests.** Render preparing then ready with the existing capture button focused; assert exact English/Arabic spec copy, the same focused button, and no `[aria-live]`, `role="alert"`, or `role="status"`. Assert inactive omits the paragraph and a rerender never calls an audio IPC method.
-- [ ] **Step 2: Write failing settings tests.** Readiness is checked by default while optional success is unchecked. Save `ready_sound: false`, `ready_delay_ms: 1250`, language `ar` and independent success state; assert callback values and RTL. Assert `min=500`, `max=5000`, `step=50`, `required`, native labels and help associations. Invalid/empty input cannot submit. A settings broadcast updates a second session without calling `ipc.sound`.
+- [x] **Step 1: Write failing component tests.** Render preparing then ready with the existing capture button focused; assert exact English/Arabic spec copy, the same focused button, and no `[aria-live]`, `role="alert"`, or `role="status"`. Assert inactive omits the paragraph and a rerender never calls an audio IPC method.
+- [x] **Step 2: Write failing settings tests.** Readiness is checked by default while optional success is unchecked. Save `ready_sound: false`, `ready_delay_ms: 1250`, language `ar` and independent success state; assert callback values and RTL. Assert `min=500`, `max=5000`, `step=50`, `required`, native labels and help associations. Invalid/empty input cannot submit. A settings broadcast updates a second session without calling `ipc.sound`.
 
 ```ts
 it('defaults readiness independently of optional success feedback', () => {
@@ -247,10 +247,10 @@ it('defaults readiness independently of optional success feedback', () => {
 });
 ```
 
-- [ ] **Step 3: Run** `npm run test:ui -- src/components/RecordingPanel.test.ts src/components/SettingsPanel.test.ts src/lib/session.test.ts`. Expected RED for missing UI/state or copy.
-- [ ] **Step 4: Implement the small render/form changes.** Use the exact setting labels in the approved spec. Add `readySound`, `readyDelay`, `readyDelayHelp`, `preparingToSpeak`, `readyToSpeak`, `ready_sound_failed`, `feedback_sound_failed` in both dictionaries. The helper says the interval follows confirmation, applies next Start, and reducing it requires checking initial words. Do not add frontend timers, audio playback, or new listeners for cue replay.
-- [ ] **Step 5: Run the focused tests, `npm run check`, `npm run format:check`, and `npm run build`.** Expected PASS; format only changed files if needed.
-- [ ] **Step 6: Commit** `feat: expose accessible speech-readiness state and settings`.
+- [x] **Step 3: Run** `npm run test:ui -- src/components/RecordingPanel.test.ts src/components/SettingsPanel.test.ts src/lib/session.test.ts`. Expected RED for missing UI/state or copy.
+- [x] **Step 4: Implement the small render/form changes.** Use the exact setting labels in the approved spec. Add `readySound`, `readyDelay`, `readyDelayHelp`, `preparingToSpeak`, `readyToSpeak`, `ready_sound_failed`, `feedback_sound_failed` in both dictionaries. The helper says the interval follows confirmation, applies next Start, and reducing it requires checking initial words. Do not add frontend timers, audio playback, or new listeners for cue replay.
+- [x] **Step 5: Run the focused tests, `npm run check`, `npm run format:check`, and `npm run build`.** Expected PASS; format only changed files if needed.
+- [x] **Step 6: Commit** `feat: expose accessible speech-readiness state and settings`.
 
 ## Task 6: Prove release integration and physical speech acceptance
 
@@ -258,9 +258,9 @@ it('defaults readiness independently of optional success feedback', () => {
 
 **Interfaces:** Use existing `restartFixture`, `button`, `shortcut`, `waitFor`, `commands`, `flag`, `inject` and the normal rendered state/settings. Keep exactly four mandatory release Desktop E2E cases; extend their assertions without adding a production control hook.
 
-- [ ] **Step 1: Extend the four existing E2E cases before final implementation polish.** Use explicit `#success-sound` selectors instead of ambiguous first-checkbox selectors. Assert default readiness on/800, a held confirmation remains preparing, rapid Start/Pause/Resume/Stop never becomes ready for the cancelled take, and a separately confirmed Start does become ready after its guard. Open a second window and assert the shared state/settings. Save readiness off/1250 with Arabic and prove restart persistence without reconnect. Retain existing copy/integrity/focus assertions.
-- [ ] **Step 2: Run the extended integration cases against the new release build.** Unit/component RED evidence from earlier tasks remains required; do not rebuild an older binary solely to duplicate it or weaken the four-case release gate. Add coverage for recording becoming ready while a fixture file job is held, using the existing `hold-hash` flag and releasing it in `finally`. If an integration assertion fails, diagnose the real IPC/state behavior before changing expectations.
-- [ ] **Step 3: Build the real resources and run complete checks.** Reuse verified unchanged Observer/helper resources if available; otherwise use `scripts/build-observer.ps1` and `scripts/build-file-helper.ps1`, installing compatible missing tools. Use a signing-compatible Observer for the physical phone and do not uninstall its existing package to bypass signature failure. Run the following once after final changes:
+- [x] **Step 1: Extend the four existing E2E cases before final implementation polish.** Use explicit `#success-sound` selectors instead of ambiguous first-checkbox selectors. Assert default readiness on/800, a held confirmation remains preparing, rapid Start/Pause/Resume/Stop never becomes ready for the cancelled take, and a separately confirmed Start does become ready after its guard. Open a second window and assert the shared state/settings. Save readiness off/1250 with Arabic and prove restart persistence without reconnect. Retain existing copy/integrity/focus assertions.
+- [x] **Step 2: Run the extended integration cases against the new release build.** Unit/component RED evidence from earlier tasks remains required; do not rebuild an older binary solely to duplicate it or weaken the four-case release gate. Add coverage for recording becoming ready while a fixture file job is held, using the existing `hold-hash` flag and releasing it in `finally`. If an integration assertion fails, diagnose the real IPC/state behavior before changing expectations.
+- [x] **Step 3: Build the real resources and run complete checks.** Reuse verified unchanged Observer/helper resources if available; otherwise use `scripts/build-observer.ps1` and `scripts/build-file-helper.ps1`, installing compatible missing tools. Use a signing-compatible Observer for the physical phone and do not uninstall its existing package to bypass signature failure. Run the following once after final changes:
 
 ```powershell
 cargo fmt --all --check
@@ -279,11 +279,11 @@ npm run test:desktop
 
 Use the existing `run-desktop-unprivileged.ps1` wrapper only if the current execution context needs it; inspect that script before use. Expected: all checks pass, four real release desktop cases pass, and an acceptance report identifies the tested executable/resources. No release tag/publication is part of this task.
 
-- [ ] **Step 4: Perform the approved physical acceptance with the new release EXE.** Record its hash and current phone/Open Camera/Windows versions; save the existing app settings and phone accessibility state. Select real ADB, 800 ms and PC headphones; open Open Camera idle in video mode. For ten starts through the real app, the user supplies continuous audible hum before Start and marked words after the ready cue finishes. Stop each take, copy only newly created test fixtures, capture the native logs, and decode both tracks with `ffprobe`/`ffmpeg`. Verify complete words and that the cue follows the measured onset/ramp; record timing uncertainty honestly. Headphone-only PC tones cannot serve as an acoustic reference reaching the phone. An external microphone is not required for this acceptance.
-- [ ] **Step 5: Exercise cancellation/output cases on the release app.** Stop/Pause before the guard, disconnect before the guard, open another window during preparation, disable/re-enable while pending, and verify a background file operation does not block recording. Record whether each pending cue was suppressed and whether one ordinary Start gave exactly one headphone cue. Restore settings only if no intervening user change superseded the saved value. Remove only test-created phone fixtures after verified copies, and leave capture stopped. If acceptance fails, use systematic debugging and revise the design/default with the user; do not declare the cue safe or just keep increasing sleeps.
-- [ ] **Step 6: Document the new workflow and evidence.** Explain that speaking starts after the PC cue, its separate setting, the meaning of preparing/ready, cancellation, and the remaining preamble. Synchronize English/Arabic user guidance. Report actual build/device coverage and any unperformed physical case; never substitute fixture success for audible/phone acceptance.
-- [ ] **Step 7: Obtain the selected workflow's independent review, address actionable findings with regression tests, then rerun only affected checks.** Use verification-before-completion and finishing-a-development-branch at the appropriate execution stage.
-- [ ] **Step 8: Commit** `test: verify release speech-readiness workflow` when its checks and evidence are accurate.
+- [x] **Step 4: Perform the approved physical acceptance with the new release EXE.** Record its hash and current phone/Open Camera/Windows versions; save the existing app settings and phone accessibility state. Select real ADB, 800 ms and PC headphones; open Open Camera idle in video mode. For ten starts through the real app, the user supplies continuous audible hum before Start and marked words after the ready cue finishes. Stop each take, copy only newly created test fixtures, capture the native logs, and decode both tracks with `ffprobe`/`ffmpeg`. Verify complete words and that the cue follows the measured onset/ramp; record timing uncertainty honestly. Headphone-only PC tones cannot serve as an acoustic reference reaching the phone. An external microphone is not required for this acceptance.
+- [x] **Step 5: Exercise cancellation/output cases on the release app.** Stop/Pause before the guard, disconnect before the guard, open another window during preparation, disable/re-enable while pending, and verify a background file operation does not block recording. Record whether each pending cue was suppressed and whether one ordinary Start gave exactly one headphone cue. Restore settings only if no intervening user change superseded the saved value. Remove only test-created phone fixtures after verified copies, and leave capture stopped. If acceptance fails, use systematic debugging and revise the design/default with the user; do not declare the cue safe or just keep increasing sleeps.
+- [x] **Step 6: Document the new workflow and evidence.** Explain that speaking starts after the PC cue, its separate setting, the meaning of preparing/ready, cancellation, and the remaining preamble. Synchronize English/Arabic user guidance. Report actual build/device coverage and any unperformed physical case; never substitute fixture success for audible/phone acceptance.
+- [x] **Step 7: Obtain the selected workflow's independent review, address actionable findings with regression tests, then rerun only affected checks.** Use verification-before-completion and finishing-a-development-branch at the appropriate execution stage.
+- [x] **Step 8: Commit** `test: verify release speech-readiness workflow` when its checks and evidence are accurate.
 
 ## Plan Self-Review and Handoff
 
