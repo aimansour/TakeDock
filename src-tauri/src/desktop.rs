@@ -1,8 +1,10 @@
 use crate::updates::{UpdateInfo, Updates};
 use crate::{
+    audio::{AudioDispatcher, play_system_tone},
     events::Events,
     files::{FileService, JobKind, Video},
     model::*,
+    readiness::{ReadinessPolicy, ReadyToken},
     session::{Engine, EventSink},
     settings,
     windows::{self, Windows},
@@ -18,7 +20,8 @@ use tauri::{Emitter, Manager, State};
 use tauri_plugin_updater::UpdaterExt;
 
 struct Runtime {
-    engine: RwLock<Option<Arc<Engine>>>,
+    engine: Arc<RwLock<Option<Arc<Engine>>>>,
+    audio: Arc<AudioDispatcher>,
     files: FileService,
     settings: Arc<Mutex<Settings>>,
     settings_path: PathBuf,
@@ -30,6 +33,7 @@ struct Runtime {
     windows: Mutex<Windows>,
     events: Arc<Mutex<Events>>,
     startup_checked: AtomicBool,
+    stopped: AtomicBool,
 }
 impl Runtime {
     fn engine(&self) -> Result<Arc<Engine>, String> {
@@ -41,7 +45,11 @@ impl Runtime {
     }
     fn reconnect(&self) -> Result<(), String> {
         let _guard = self.reconnect.lock().unwrap();
-        if let Some(engine) = self.engine.write().unwrap().take() {
+        if self.stopped.load(Ordering::Acquire) {
+            return Err("disconnected".into());
+        }
+        let previous = { self.engine.write().unwrap().take() };
+        if let Some(engine) = previous {
             engine.shutdown();
         }
         let engine = Engine::start(
@@ -53,10 +61,16 @@ impl Runtime {
         Ok(())
     }
     fn shutdown(&self) {
-        if let Some(engine) = self.engine.write().unwrap().take() {
+        let _guard = self.reconnect.lock().unwrap();
+        if self.stopped.swap(true, Ordering::AcqRel) {
+            return;
+        }
+        let previous = { self.engine.write().unwrap().take() };
+        if let Some(engine) = previous {
             engine.shutdown();
         }
         self.files.shutdown();
+        self.audio.shutdown();
     }
 }
 #[derive(serde::Serialize)]
@@ -128,10 +142,21 @@ async fn save_settings(
     let runtime = state.inner().clone();
     let videos = app.path().video_dir().map_err(|error| error.to_string())?;
     tauri::async_runtime::spawn_blocking(move || {
+        let _reconnect = runtime.reconnect.lock().unwrap();
+        if runtime.stopped.load(Ordering::Acquire) {
+            return Err("disconnected".into());
+        }
         settings::ensure_destination(&mut settings, &videos)?;
         let mut current = runtime.settings.lock().unwrap();
         settings::save(&runtime.settings_path, &settings)?;
         *current = settings.clone();
+        let engine = { runtime.engine.read().unwrap().clone() };
+        if let Some(engine) = engine {
+            engine.set_readiness_policy(ReadinessPolicy {
+                sound: settings.ready_sound,
+                delay_ms: settings.ready_delay_ms,
+            });
+        }
         let _ = app.emit("settings-changed", &settings);
         Ok(settings)
     })
@@ -150,26 +175,7 @@ fn play_feedback(success: bool, state: State<'_, Arc<Runtime>>) {
     if success && !state.settings.lock().unwrap().success_sound {
         return;
     }
-    feedback(success);
-}
-fn feedback(success: bool) {
-    #[cfg(windows)]
-    std::thread::spawn(move || {
-        #[link(name = "kernel32")]
-        unsafe extern "system" {
-            fn Beep(frequency: u32, duration: u32) -> i32;
-        }
-        let notes = if success {
-            [(880, 60), (1175, 90)]
-        } else {
-            [(330, 110), (220, 160)]
-        };
-        for (frequency, duration) in notes {
-            unsafe {
-                Beep(frequency, duration);
-            }
-        }
-    });
+    state.audio.feedback(success);
 }
 #[tauri::command]
 async fn new_window(app: tauri::AppHandle, state: State<'_, Arc<Runtime>>) -> Result<(), String> {
@@ -329,21 +335,63 @@ pub fn run() {
             }
             let settings = Arc::new(Mutex::new(saved));
             let events = Arc::new(Mutex::new(Events::default()));
+            let engine: Arc<RwLock<Option<Arc<Engine>>>> = Arc::new(RwLock::new(None));
+            let claim_slot = Arc::downgrade(&engine);
+            let failure_slot = Arc::downgrade(&engine);
+            let error_handle = app.handle().clone();
+            let audio = Arc::new(AudioDispatcher::start(
+                Arc::new(play_system_tone),
+                Arc::new(move |token| {
+                    let current = claim_slot
+                        .upgrade()
+                        .and_then(|slot| slot.read().unwrap().clone());
+                    current.is_some_and(|engine| engine.claim_ready_cue(token))
+                }),
+                Arc::new(move |token, detail| {
+                    let (generation, code) = if let Some(token) = token {
+                        (token.generation, "ready_sound_failed")
+                    } else {
+                        let current = failure_slot
+                            .upgrade()
+                            .and_then(|slot| slot.read().unwrap().clone());
+                        (
+                            current
+                                .map(|engine| engine.snapshot().generation)
+                                .unwrap_or(0),
+                            "feedback_sound_failed",
+                        )
+                    };
+                    // Bypass the sound-generating sink: audio failure is an
+                    // ordinary error, never a request for another error tone.
+                    let _ = error_handle.emit(
+                        "operation-error",
+                        serde_json::json!({
+                        "generation":generation,"code":code,"detail":detail }),
+                    );
+                }),
+            ));
             let handle = app.handle().clone();
             let event_settings = settings.clone();
             let history = events.clone();
+            let event_audio = audio.clone();
             let sink: EventSink = Arc::new(move |event, payload| {
                 let sound = history.lock().unwrap().receive(event, &payload);
                 if let Some(success) = sound
                     && (!success || event_settings.lock().unwrap().success_sound)
                 {
-                    feedback(success);
+                    event_audio.feedback(success);
+                }
+                if event == "speech-ready"
+                    && let Ok(token) = serde_json::from_value::<ReadyToken>(payload.clone())
+                {
+                    event_audio.ready(token);
                 }
                 let _ = handle.emit(event, payload);
             });
             let resources = app.path().resource_dir()?;
             let runtime = Arc::new(Runtime {
-                engine: RwLock::new(None),
+                engine,
+                audio,
                 files: FileService::start(resources.clone(), sink.clone()),
                 settings,
                 settings_path: config,
@@ -355,6 +403,7 @@ pub fn run() {
                 windows: Mutex::new(windows),
                 events,
                 startup_checked: AtomicBool::new(false),
+                stopped: AtomicBool::new(false),
             });
             if let Err(error) = runtime.reconnect() {
                 runtime.errors.lock().unwrap().push(error);

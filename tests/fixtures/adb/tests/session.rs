@@ -268,6 +268,92 @@ fn ready_settings_apply_without_reconnect() {
     assert_eq!(cues.lock().unwrap()[0].start_sequence, 3);
     engine.shutdown();
 }
+
+#[test]
+fn held_audio_output_does_not_delay_capture_delivery() {
+    use std::sync::{Mutex, Weak, mpsc};
+    use takedock_lib::{
+        audio::{AudioDispatcher, Tone},
+        readiness::ReadyToken,
+    };
+    let (directory, adb_path) = fixture();
+    let engine_slot: Arc<Mutex<Option<Weak<Engine>>>> = Arc::new(Mutex::new(None));
+    let claim_slot = engine_slot.clone();
+    let (played, tones) = mpsc::channel();
+    let (release, held) = mpsc::channel();
+    let held = Mutex::new(held);
+    let first = std::sync::atomic::AtomicBool::new(true);
+    let audio = Arc::new(AudioDispatcher::start(
+        Arc::new(move |tone| {
+            played.send(tone).unwrap();
+            if first.swap(false, std::sync::atomic::Ordering::SeqCst) {
+                held.lock()
+                    .unwrap()
+                    .recv_timeout(Duration::from_secs(5))
+                    .map_err(|e| e.to_string())?;
+            }
+            Ok(())
+        }),
+        Arc::new(move |token| {
+            let engine = claim_slot.lock().unwrap().as_ref().and_then(Weak::upgrade);
+            engine.is_some_and(|engine| engine.claim_ready_cue(token))
+        }),
+        Arc::new(|_, error| panic!("unexpected audio error: {error}")),
+    ));
+    let queued = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let ready_queued = queued.clone();
+    let output = audio.clone();
+    let engine = Arc::new(
+        Engine::start(
+            Settings {
+                adb_path,
+                ready_delay_ms: 500,
+                ..Default::default()
+            },
+            directory.path().join("observer.apk"),
+            Arc::new(move |event, payload| {
+                if event == "speech-ready" {
+                    output.ready(serde_json::from_value::<ReadyToken>(payload).unwrap());
+                    ready_queued.store(true, std::sync::atomic::Ordering::SeqCst);
+                }
+            }),
+        )
+        .unwrap(),
+    );
+    *engine_slot.lock().unwrap() = Some(Arc::downgrade(&engine));
+    wait_until(|| engine.snapshot().predicted == RecordingState::Idle);
+    audio.feedback(false);
+    assert_eq!(
+        tones.recv_timeout(Duration::from_secs(2)).unwrap(),
+        Tone::Failure
+    );
+    engine.dispatch(RecordingAction::Start).unwrap();
+    wait_until(|| queued.load(std::sync::atomic::Ordering::SeqCst));
+    for action in [
+        RecordingAction::Pause,
+        RecordingAction::Resume,
+        RecordingAction::Stop,
+    ] {
+        engine.dispatch(action).unwrap();
+    }
+    wait_until(|| {
+        std::fs::read_to_string(directory.path().join("commands.jsonl"))
+            .unwrap_or_default()
+            .lines()
+            .count()
+            == 4
+    });
+    assert_eq!(engine.snapshot().predicted, RecordingState::Idle);
+    audio.feedback(true);
+    release.send(()).unwrap();
+    assert_eq!(
+        tones.recv_timeout(Duration::from_secs(2)).unwrap(),
+        Tone::Success
+    );
+    engine.shutdown();
+    audio.shutdown();
+    assert!(tones.try_recv().is_err());
+}
 #[test]
 fn multiple_devices_remove_the_session_instead_of_selecting_arbitrarily() {
     let (directory, adb_path) = fixture();

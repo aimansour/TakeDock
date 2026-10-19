@@ -1,4 +1,5 @@
 pub mod adb;
+pub mod audio;
 #[cfg(feature = "desktop")]
 pub mod desktop;
 pub mod events;
