@@ -1,6 +1,9 @@
 # Recording-readiness execution decisions
 
-These are all 15 recorded rulings, in execution order. Deferred Minor findings: none.
+These are all 15 recorded rulings, in execution order. The fresh reviewer raised
+no Minor findings. One non-blocking final-verification follow-up is deferred:
+the updater validation example logs a missing default-window-icon resource,
+although its signed-update checks pass and no installation runs.
 
 - Task 1: Ruling: cargo fmt selected a newly installed Rustup proxy and retriggered a partial download; invoke the same official 1.98.1 cargo-fmt/rustfmt executables directly with explicit Cargo/Rustc 1.99 for this gate, after verifying the archive SHA-256 against the official 1.98.1 manifest — preserves the identical formatter and permits implementation while the pinned compiler downloads — cost if wrong: formatting mismatch; pinned-toolchain validation remains required before final acceptance.
 

@@ -158,6 +158,14 @@ whole suite is green: 92 Rust tests, 43 UI tests and all four real release
 desktop cases, with strict Clippy, formatting and Svelte/TypeScript checks.
 There were no Critical findings or deferred Minor findings.
 
+The final desktop run recovered two WebDriver stale-element warnings during
+reactive UI updates; all four cases completed successfully. These are retained
+in the private verification log, not counted as failed cases or hidden.
+The updater validation example also reports a missing default-window-icon
+resource while its signed-update checks pass and no installation runs. This
+non-blocking diagnostic is a deferred Minor follow-up; it does not establish
+an icon failure in the tested release application.
+
 This acceptance covers this device/internal microphone and the tested default
 output. Headphones, external microphones, different camera settings, other
 phones and future OS/camera changes require their own checks. The preparation
