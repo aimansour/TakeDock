@@ -59,7 +59,7 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
   assert.equal(acceptance.tests.length, 4);
   assert.ok(acceptance.tests.every((test) => test.passed));
   const repository = process.env.GITHUB_REPOSITORY;
-  assert.equal(repository, 'aimansour/TakeDock');
+  assert.equal(repository, 'wip-bunker-42/TakeDock');
   const latest = spawnSync(
     'gh',
     ['api', `repos/${repository}/releases/latest`, '--include'],
