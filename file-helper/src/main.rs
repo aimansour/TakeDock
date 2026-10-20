@@ -2,9 +2,23 @@ use std::io::Write;
 use takedock_files::{Identity, Root, VIDEO_ROOT};
 fn run() -> Result<(), String> {
     let root = Root::open(std::path::Path::new(VIDEO_ROOT))?;
+    let args = std::env::args().skip(1).collect::<Vec<_>>();
+    let borrowed = args.iter().map(String::as_str).collect::<Vec<_>>();
+    match borrowed.as_slice() {
+        ["watch", stream] => {
+            return takedock_files::watch::run(&root, stream, &mut std::io::stdout().lock());
+        }
+        ["inspect", name] => {
+            println!(
+                "{}",
+                serde_json::to_string(&root.inspect(name)?).map_err(|e| e.to_string())?
+            );
+            return Ok(());
+        }
+        _ => {}
+    }
     let _lock = root.lock()?;
     root.recover()?;
-    let args = std::env::args().skip(1).collect::<Vec<_>>();
     match args
         .iter()
         .map(String::as_str)
