@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 mod finalized;
+pub mod guarded;
 pub mod watch;
 use sha2::{Digest, Sha256};
 use std::{
@@ -38,6 +39,25 @@ struct Journal {
     identity: Identity,
 }
 impl Root {
+    pub fn delete_guarded(
+        &self,
+        name: &str,
+        expected: &Identity,
+        permit: impl FnOnce() -> Result<bool, String>,
+    ) -> Result<(), String> {
+        self.checked(name, expected)?;
+        if !self.video_ready(name)? {
+            return Err("video_not_finalized".into());
+        }
+        if !permit()? {
+            return Err("discard_cancelled".into());
+        }
+        self.checked(name, expected)?;
+        if !self.video_ready(name)? {
+            return Err("video_not_finalized".into());
+        }
+        self.delete(name, expected)
+    }
     /// Inspect a stable named object without acquiring the mutation lock.
     pub fn inspect(&self, name: &str) -> Result<Entry, String> {
         validate_name(name)?;

@@ -39,6 +39,17 @@ fn run() -> Result<(), String> {
             }
         }
         ["stat", name] => println!("{}", serde_json::to_string(&root.stat(name)?).unwrap()),
+        ["delete-guarded", name, expected, operation] => {
+            let expected: Identity = serde_json::from_str(expected).map_err(|e| e.to_string())?;
+            takedock_files::guarded::serve(
+                &root,
+                name,
+                &expected,
+                operation,
+                takedock_files::guarded::read_permit_stdin,
+                &mut std::io::stdout().lock(),
+            )?;
+        }
         ["hash", name, expected] => {
             if !root.video_ready(name)? {
                 return Err("video_not_finalized".into());

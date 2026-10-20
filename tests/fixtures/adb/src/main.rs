@@ -219,6 +219,19 @@ fn main() {
             )
             .unwrap();
         }
+        ["shell", "-T", command] => {
+            let args = shell_words::split(command).unwrap();
+            if !args
+                .first()
+                .is_some_and(|path| path.starts_with("/data/local/tmp/takedock-files-"))
+            {
+                std::process::exit(2);
+            }
+            if let Err(error) = file_command(&root, &args[1..]) {
+                eprintln!("{error}");
+                std::process::exit(1);
+            }
+        }
         ["exec-out", command] => {
             let args = shell_words::split(command).unwrap();
             if !args
@@ -265,6 +278,24 @@ fn file_command(root: &Path, args: &[String]) -> Result<(), String> {
             }
         }
         ["stat", name] => println!("{}", serde_json::to_string(&videos.stat(name)?).unwrap()),
+        ["delete-guarded", name, expected, operation] => {
+            fs::write(root.join("delete-prepared"), name).unwrap();
+            while root.join("hold-delete-prepared").exists() {
+                thread::sleep(Duration::from_millis(10));
+            }
+            let expected = serde_json::from_str(expected).map_err(|e| e.to_string())?;
+            takedock_files::guarded::serve(
+                &videos,
+                name,
+                &expected,
+                operation,
+                takedock_files::guarded::read_permit_stdin,
+                &mut GuardOutput {
+                    root,
+                    bytes: Vec::new(),
+                },
+            )?;
+        }
         [kind, name, expected] if ["read", "hash", "delete"].contains(kind) => {
             let identity = serde_json::from_str(expected).map_err(|e| e.to_string())?;
             if !videos.video_ready(name)? {
@@ -318,6 +349,34 @@ fn file_command(root: &Path, args: &[String]) -> Result<(), String> {
     }
     Ok(())
 }
+struct GuardOutput<'a> {
+    root: &'a Path,
+    bytes: Vec<u8>,
+}
+impl Write for GuardOutput<'_> {
+    fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+        self.bytes.extend(bytes);
+        while let Some(end) = self.bytes.iter().position(|byte| *byte == b'\n') {
+            let line: Vec<_> = self.bytes.drain(..=end).collect();
+            let message: Value = serde_json::from_slice(&line).unwrap();
+            if message["type"] == "result" && message["status"] == "deleted" {
+                fs::write(self.root.join("delete-result-held"), b"").unwrap();
+                while self.root.join("hold-delete-result").exists() {
+                    thread::sleep(Duration::from_millis(10));
+                }
+                if self.root.join("drop-delete-result").exists() {
+                    return Err(io::ErrorKind::BrokenPipe.into());
+                }
+            }
+            io::stdout().lock().write_all(&line)?;
+        }
+        Ok(bytes.len())
+    }
+    fn flush(&mut self) -> io::Result<()> {
+        io::stdout().flush()
+    }
+}
+
 fn watch_files(root: &Path, videos: &takedock_files::Root, stream: &str) -> Result<(), String> {
     use std::{collections::BTreeMap, time::Instant};
     use takedock_files::watch::{ManifestEntry, WatchBody, WatchFrame};

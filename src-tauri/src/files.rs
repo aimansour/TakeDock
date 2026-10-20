@@ -123,6 +123,8 @@ pub enum JobKind {
 }
 #[derive(Clone, Debug, Serialize)]
 pub struct JobEvent {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub discard_operation_id: Option<String>,
     pub id: String,
     pub generation: u64,
     pub kind: JobKind,
@@ -153,6 +155,7 @@ struct Job {
 enum Message {
     List(DeviceLease, mpsc::Sender<Result<Vec<Video>, String>>),
     Job(Box<Job>),
+    Discard(Box<crate::guarded_delete::DiscardJob>),
     Stop,
 }
 pub struct FileService {
@@ -162,6 +165,63 @@ pub struct FileService {
     sink: EventSink,
 }
 impl FileService {
+    pub fn start_discard_delete(
+        &self,
+        lease: DeviceLease,
+        video: Video,
+        operation_id: String,
+        authorize: Arc<dyn Fn() -> bool + Send + Sync>,
+        complete: Arc<dyn Fn(crate::discard::DeleteOutcome) + Send + Sync>,
+    ) -> Result<String, String> {
+        takedock_files::validate_name(&video.name)?;
+        let identity: Identity = serde_json::from_str(&video.identity).map_err(err)?;
+        if !video.ready || identity.size != video.size {
+            return Err("video_not_finalized".into());
+        }
+        if operation_id.is_empty()
+            || operation_id.len() > 128
+            || lease.cancelled.load(Ordering::Acquire)
+        {
+            return Err("discard_cancelled".into());
+        }
+        let id = uuid::Uuid::new_v4().to_string();
+        let cancel = Arc::new(AtomicBool::new(false));
+        let event = JobEvent {
+            discard_operation_id: Some(operation_id.clone()),
+            id: id.clone(),
+            generation: lease.generation,
+            kind: JobKind::Delete,
+            status: "queued".into(),
+            phase: "preparing".into(),
+            name: video.name.clone(),
+            bytes: 0,
+            total: video.size,
+            completed: 0,
+            count: 1,
+            message: String::new(),
+            results: Vec::new(),
+        };
+        self.jobs.lock().unwrap().insert(id.clone(), cancel.clone());
+        let job = crate::guarded_delete::DiscardJob {
+            event: event.clone(),
+            lease,
+            video,
+            operation_id,
+            cancel,
+            authorize,
+            complete,
+        };
+        if self
+            .sender
+            .try_send(Message::Discard(Box::new(job)))
+            .is_err()
+        {
+            self.jobs.lock().unwrap().remove(&id);
+            return Err("file_queue_full".into());
+        }
+        emit(&self.sink, &event);
+        Ok(id)
+    }
     pub fn start(resources: PathBuf, sink: EventSink) -> Self {
         let (sender, receiver) = mpsc::sync_channel(16);
         let jobs = Arc::new(Mutex::new(HashMap::new()));
@@ -172,6 +232,11 @@ impl FileService {
             let mut remote = Remote::new(resources);
             for message in receiver {
                 match message {
+                    Message::Discard(job) => {
+                        let id = job.event.id.clone();
+                        crate::guarded_delete::run(&mut remote, *job, &sink);
+                        active.lock().unwrap().remove(&id);
+                    }
                     Message::List(lease, reply) => {
                         let result = remote
                             .prepare(&lease)
@@ -264,6 +329,7 @@ impl FileService {
         let id = uuid::Uuid::new_v4().to_string();
         let cancel = Arc::new(AtomicBool::new(false));
         let event = JobEvent {
+            discard_operation_id: None,
             id: id.clone(),
             generation: lease.generation,
             kind,
