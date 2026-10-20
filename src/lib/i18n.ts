@@ -45,7 +45,7 @@ const en = {
   discardShortcutHelp:
     'Deletion requires the Stop and delete button; Ctrl+Shift+R only starts or stops recording.',
   discardAssumptionHelp:
-    'Automatic deletion requires Open Camera to save here with no other app adding videos during the take.',
+    'Automatic deletion requires Open Camera to save in /sdcard/DCIM/OpenCamera with no other app adding videos during the take.',
   discard_waiting_to_stop: 'Waiting for the take to be ready to stop…',
   discard_confirming_stop: 'Confirming that recording has stopped…',
   discard_finalizing: 'Waiting for the video to finish saving…',
@@ -240,7 +240,7 @@ const ar: Record<keyof typeof en, string> = {
   discardShortcutHelp:
     'الحذف يتطلب تفعيل زر إيقاف وحذف؛ الاختصار Ctrl+Shift+R يبدأ التسجيل أو يوقفه فقط.',
   discardAssumptionHelp:
-    'الحذف التلقائي يتطلب أن يحفظ Open Camera في هذا المجلد وألّا يضيف تطبيق آخر فيديوهات أثناء المحاولة.',
+    'الحذف التلقائي يتطلب أن يحفظ Open Camera في /sdcard/DCIM/OpenCamera وألّا يضيف تطبيق آخر فيديوهات أثناء المحاولة.',
   discard_waiting_to_stop: 'جارٍ انتظار جاهزية المحاولة للإيقاف…',
   discard_confirming_stop: 'جارٍ التأكد من توقف التسجيل…',
   discard_finalizing: 'جارٍ انتظار اكتمال حفظ الفيديو…',

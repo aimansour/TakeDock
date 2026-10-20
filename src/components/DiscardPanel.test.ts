@@ -42,6 +42,7 @@ it.each([
     });
     const checkbox = screen.getByRole('checkbox', { name: label });
     const primary = screen.getByRole('button', { name: stop });
+    expect(screen.getByText(/\/sdcard\/DCIM\/OpenCamera/)).toBeInTheDocument();
     expect(checkbox).not.toBeChecked();
     checkbox.focus();
     await user.keyboard(' ');

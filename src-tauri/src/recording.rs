@@ -149,6 +149,13 @@ impl RecordingMachine {
         {
             return Vec::new();
         }
+        if self.observation_sequence != 0
+            && observation.seq != self.observation_sequence.saturating_add(1)
+        {
+            // Ordinary state reconciliation can coalesce observations. A take's
+            // destructive authorization requires continuous camera history.
+            self.cancel_discard("discard_observation_lost");
+        }
         self.observation_sequence = observation.seq;
         self.event_time = observation.event_time;
         if !self.capture_available {
@@ -429,6 +436,49 @@ mod tests {
             .stop_queued(&receipt.operation_id, stop.sequence);
         let ticket = model.discard_write_ticket(stop.sequence).unwrap();
         (model, stop.sequence, ticket)
+    }
+    #[test]
+    fn observer_gap_permanently_invalidates_tracking_without_blocking_stop() {
+        let mut model = machine();
+        model.file_evidence = Some(crate::discard::FileEvidence {
+            stream: "watch".into(),
+            sequence: 3,
+            complete: true,
+            received_ms: 0,
+            entries: std::sync::Arc::new(std::collections::BTreeMap::new()),
+        });
+        model.dispatch(RecordingAction::Start, 1, 1000).unwrap();
+        model.observe(observation(2, RecordingState::Recording), 100);
+        let take = model.discard.snapshot().take.unwrap();
+        assert!(model.discard.snapshot().eligible);
+        model.observe(observation(4, RecordingState::Recording), 101);
+        assert!(!model.discard.snapshot().eligible);
+        model.observe(observation(5, RecordingState::Paused), 102);
+        model.observe(observation(6, RecordingState::Recording), 103);
+        assert!(model.discard.request(&take, 104, 1000).is_err());
+        assert!(model.dispatch(RecordingAction::Stop, 105, 1000).is_ok());
+    }
+    #[test]
+    fn observer_gap_withdraws_deferred_discard_stop() {
+        let (mut model, sequence, ticket) = queued_discard();
+        model.observe(observation(4, RecordingState::Recording), 701);
+        assert!(!model.commit_discard_write(sequence, &ticket));
+        assert_eq!(model.state.pending, 0);
+        assert_eq!(model.discard.snapshot().phase, DiscardPhase::Retained);
+        assert!(model.discard.poll(900).is_empty());
+    }
+    #[test]
+    fn observer_gap_cancels_finalization_and_later_states_cannot_restore_it() {
+        let (mut model, sequence, ticket) = queued_discard();
+        assert!(model.commit_discard_write(sequence, &ticket));
+        model.observe(observation(3, RecordingState::Idle), 701);
+        assert_eq!(model.discard.snapshot().phase, DiscardPhase::Finalizing);
+        model.observe(observation(5, RecordingState::Idle), 702);
+        model.observe(observation(6, RecordingState::Idle), 703);
+        assert_eq!(model.discard.snapshot().phase, DiscardPhase::Retained);
+        assert!(model.discard.poll(900).is_empty());
+        let operation = model.discard.snapshot().operation_id.unwrap();
+        assert!(!model.discard.authorize_delete(&operation));
     }
     #[test]
     fn new_start_after_withdrawn_stop_is_revalidated_without_a_wrong_toggle() {

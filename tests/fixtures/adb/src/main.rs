@@ -272,6 +272,10 @@ fn main() {
             "-d",
             uri,
         ] if uri.starts_with("file:///sdcard/DCIM/OpenCamera/") => {
+            fs::write(root.join("index-started"), b"").unwrap();
+            while root.join("hold-index").exists() {
+                thread::sleep(Duration::from_millis(10));
+            }
             println!("Broadcast completed: result=0");
         }
         ["shell", "mv", "-f", from, to] => {

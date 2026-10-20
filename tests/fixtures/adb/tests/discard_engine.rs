@@ -89,11 +89,33 @@ impl Drop for Recording {
         self.fixture.unflag("hold-delete-prepared");
         self.fixture.unflag("hold-hash");
         self.fixture.unflag("hold-delete-result");
+        self.fixture.unflag("hold-index");
         self.engine.shutdown();
         self.files.shutdown();
     }
 }
 
+#[test]
+fn acknowledged_delete_remains_completed_during_held_index_disconnect() {
+    let app = Recording::new(&["hold-index"]);
+    let take = app.start();
+    let path = app.current_file();
+    let receipt = app.request(take);
+    wait(|| app.fixture.path().join("index-started").exists());
+    assert!(!path.exists());
+    std::fs::write(app.fixture.path().join("devices.txt"), b"").unwrap();
+    wait(|| !app.engine.snapshot().connected);
+    let events = app.events.lock().unwrap();
+    let results = events
+        .iter()
+        .filter(|(event, value)| {
+            event == "discard-result" && value["operation_id"] == receipt.operation_id
+        })
+        .map(|(_, value)| value)
+        .collect::<Vec<_>>();
+    assert_eq!(results.len(), 1);
+    assert_eq!(results[0]["status"], "completed");
+}
 #[test]
 fn duplicate_requests_during_stop_confirmation_remain_idempotent() {
     let app = Recording::new(&[]);
