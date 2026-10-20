@@ -10,7 +10,7 @@
 
 **Spec:** [Approved current-take discard design](../specs/2026-10-20-current-take-discard-design.md). Also read the [fast-Stop evidence](../../research/2026-10-19-recording-readiness-acceptance.md#fast-stop-finding-and-cleanup).
 
-**Status:** User approved Native execution on 2026-10-20. Tasks 1–6 are implemented and verified. Task 7 implementation/software checks are present, but its four-case desktop gate is blocked by Windows Defender quarantining the external test fixture; physical acceptance also remains pending. See [actual acceptance evidence](../../research/2026-10-20-current-take-discard-acceptance.md). Task 7 is not complete.
+**Status:** User approved Native execution on 2026-10-20. Tasks 1–6 are implemented and verified. The independent source review's three Important findings are corrected with reproducing tests. Task 7's local desktop gate was blocked by Windows Defender quarantining the external fixture; the user authorized hosted GitHub validation, whose corrected-head evidence is tracked in [PR #19 checks](https://github.com/wip-bunker-42/TakeDock/pull/19/checks). See [local evidence and review corrections](../../research/2026-10-20-current-take-discard-acceptance.md). Task 7 remains incomplete until all required software and separately coordinated physical gates pass.
 
 ## Global Constraints
 
