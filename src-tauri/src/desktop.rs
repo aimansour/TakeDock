@@ -22,7 +22,7 @@ use tauri_plugin_updater::UpdaterExt;
 struct Runtime {
     engine: Arc<RwLock<Option<Arc<Engine>>>>,
     audio: Arc<AudioDispatcher>,
-    files: FileService,
+    files: Arc<FileService>,
     settings: Arc<Mutex<Settings>>,
     settings_path: PathBuf,
     resources: PathBuf,
@@ -52,9 +52,11 @@ impl Runtime {
         if let Some(engine) = previous {
             engine.shutdown();
         }
-        let engine = Engine::start(
+        let engine = Engine::start_with_files(
             self.settings.lock().unwrap().clone(),
             self.resources.join("observer.apk"),
+            self.resources.clone(),
+            self.files.clone(),
             self.sink.clone(),
         )?;
         *self.engine.write().unwrap() = Some(Arc::new(engine));
@@ -103,6 +105,14 @@ fn recording_action(
     state: State<'_, Arc<Runtime>>,
 ) -> Result<CommandReceipt, String> {
     state.engine()?.dispatch_for(action, generation)
+}
+#[tauri::command]
+fn discard_take(
+    take: crate::discard::TakeToken,
+    generation: u64,
+    state: State<'_, Arc<Runtime>>,
+) -> Result<crate::discard::DiscardReceipt, String> {
+    state.engine()?.request_discard(take, generation)
 }
 #[tauri::command]
 async fn list_videos(
@@ -298,6 +308,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             bootstrap,
             recording_action,
+            discard_take,
             list_videos,
             start_file_job,
             cancel_file_job,
@@ -392,7 +403,7 @@ pub fn run() {
             let runtime = Arc::new(Runtime {
                 engine,
                 audio,
-                files: FileService::start(resources.clone(), sink.clone()),
+                files: Arc::new(FileService::start(resources.clone(), sink.clone())),
                 settings,
                 settings_path: config,
                 resources,

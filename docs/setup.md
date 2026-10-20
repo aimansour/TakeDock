@@ -103,6 +103,24 @@ copy remains available after a move.
 
 ## Troubleshooting
 
+### Stop and delete the current take
+
+When available, select **Delete this take** beside **Stop**, then activate
+**Stop and delete**. The checkbox starts unchecked in each window and resets for
+each take/reconnection or when its panel closes. Progress/results are shared.
+Ctrl+Shift+R remains ordinary Start/Stop. Pause/Resume keeps the take association.
+Automatic association requires Open Camera to be the sole video writer in
+`/sdcard/DCIM/OpenCamera`, with file watching ready before TakeDock starts the
+take. Split or ambiguous recordings are retained for explicit selection.
+When unavailable, stop normally and select the intended completed video in
+Videos to delete it with the existing confirmation. A retained result means
+automatic deletion did not complete. An unknown result means deletion was
+authorized without a confirmed outcome; inspect/refresh Videos before acting.
+A newer action cancels uncommitted deletion; an already authorized mutation may
+finish. If a new Start is rejected after cancellation, issue a fresh explicit
+action after inspecting the state; the program never substitutes another toggle.
+See [acceptance and device limits](testing/current-take-discard.md).
+
 | Result | Action |
 | --- | --- |
 | No phone / multiple phones | Inspect `adb devices`; keep one authorized `device`, then Reconnect. |

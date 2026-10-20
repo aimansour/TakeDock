@@ -1,7 +1,34 @@
 export type RecordingState = 'unknown' | 'idle' | 'recording' | 'paused';
 export type RecordingAction = 'start' | 'stop' | 'pause' | 'resume';
 export type SpeechReadiness = 'inactive' | 'preparing' | 'ready';
+export interface TakeToken {
+  generation: number;
+  start_sequence: number;
+  id: string;
+}
+export interface DiscardSnapshot {
+  take: TakeToken | null;
+  eligible: boolean;
+  reason: string;
+  operation_id: string | null;
+  phase:
+    | 'unavailable'
+    | 'tracking'
+    | 'waiting_to_stop'
+    | 'confirming_stop'
+    | 'finalizing'
+    | 'deleting'
+    | 'completed'
+    | 'retained'
+    | 'outcome_unknown';
+}
+export interface DiscardReceipt {
+  generation: number;
+  take: TakeToken;
+  operation_id: string;
+}
 export interface SessionState {
+  discard: DiscardSnapshot;
   speech_readiness: SpeechReadiness;
   generation: number;
   revision: number;
@@ -39,6 +66,7 @@ export interface Video {
 }
 export type JobKind = 'copy' | 'move' | 'delete' | 'rename';
 export interface JobEvent {
+  discard_operation_id?: string | null;
   id: string;
   generation: number;
   kind: JobKind;
@@ -53,6 +81,13 @@ export interface JobEvent {
   results: { name: string; status: string; message: string }[];
 }
 export const initialSession: SessionState = {
+  discard: {
+    take: null,
+    eligible: false,
+    reason: 'discard_no_managed_take',
+    operation_id: null,
+    phase: 'unavailable',
+  },
   speech_readiness: 'inactive',
   generation: 0,
   revision: 0,

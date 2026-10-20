@@ -17,8 +17,8 @@ const ready = {
   condition: 'ready',
 };
 it.each([
-  ['en', 'Preparing to speak', 'Ready to speak', 'Stop video'],
-  ['ar', 'جارٍ التجهيز للكلام', 'جاهز للكلام', 'إنهاء الفيديو'],
+  ['en', 'Preparing to speak', 'Ready to speak', 'Stop'],
+  ['ar', 'جارٍ التجهيز للكلام', 'جاهز للكلام', 'إيقاف'],
 ] as const)(
   'renders ordinary %s readiness without moving focus or playing audio',
   async (language, preparing, speaking, stopName) => {
@@ -32,6 +32,7 @@ it.each([
       state: recording,
       language,
       onAction: vi.fn(),
+      onDiscard: vi.fn(),
     });
     expect(container.querySelector('#speech-readiness')).toBeNull();
     const stop = screen.getByRole('button', { name: stopName });
@@ -76,8 +77,9 @@ it.each([
     const { rerender } = render(RecordingPanel, {
       state: { ...ready, predicted: 'recording' },
       onAction: vi.fn(),
+      onDiscard: vi.fn(),
     });
-    const stop = screen.getByRole('button', { name: 'Stop video' });
+    const stop = screen.getByRole('button', { name: 'Stop' });
     stop.focus();
     await rerender({ state: { ...ready, ...patch } });
     await tick();
@@ -89,13 +91,14 @@ it('renders only applicable controls and keeps the primary native button focused
   const { rerender, container } = render(RecordingPanel, {
     state: ready,
     onAction: vi.fn(),
+    onDiscard: vi.fn(),
   });
   const primary = screen.getByRole('button', { name: 'Start video' });
   primary.focus();
   primary.click();
   await rerender({ state: { ...ready, predicted: 'recording' } });
   expect(screen.queryByRole('button', { name: 'Start video' })).toBeNull();
-  expect(screen.getByRole('button', { name: 'Stop video' })).toBe(primary);
+  expect(screen.getByRole('button', { name: 'Stop' })).toBe(primary);
   expect(primary).toHaveFocus();
   const pause = screen.getByRole('button', { name: 'Pause video' });
   pause.focus();

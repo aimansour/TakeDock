@@ -11,6 +11,9 @@ impl Events {
     pub fn receive(&mut self, event: &str, value: &Value) -> Option<bool> {
         let generation = value["generation"].as_u64()?;
         if event == "session-state" {
+            if generation < self.generation {
+                return None;
+            }
             if generation != self.generation {
                 self.jobs.clear();
                 self.sounded.clear();
@@ -38,6 +41,9 @@ impl Events {
                     self.jobs.insert(0, value.clone());
                     self.jobs.truncate(20);
                 }
+                if value["discard_operation_id"].is_string() {
+                    return None;
+                }
                 match status {
                     "completed" => (format!("job:{id}"), true),
                     "failed" => (format!("job:{id}"), false),
@@ -45,6 +51,9 @@ impl Events {
                 }
             }
             "verification-result" => {
+                if value["discard_operation_id"].is_string() {
+                    return None;
+                }
                 let sequence = value["sequence"].as_u64()?;
                 match status {
                     "confirmed" => (format!("command:{sequence}"), true),
@@ -53,6 +62,14 @@ impl Events {
                 }
             }
             "operation-error" => (format!("error:{}", value["code"].as_str()?), false),
+            "discard-result" => {
+                let operation = value["operation_id"].as_str()?;
+                match status {
+                    "completed" => (format!("discard:{operation}"), true),
+                    "retained" | "outcome_unknown" => (format!("discard:{operation}"), false),
+                    _ => return None,
+                }
+            }
             _ => return None,
         };
         if self.sounded.contains(&key) {
@@ -77,6 +94,33 @@ impl Events {
 mod tests {
     use super::*;
     use serde_json::json;
+    #[test]
+    fn older_session_state_cannot_restore_a_discard_feedback_generation() {
+        let mut events = Events::default();
+        events.receive("session-state", &json!({"generation":7}));
+        events.receive("session-state", &json!({"generation":6}));
+        assert_eq!(
+            events.receive(
+                "discard-result",
+                &json!({"generation":6,"operation_id":"old","status":"outcome_unknown"})
+            ),
+            None
+        );
+    }
+    #[test]
+    fn discard_owns_feedback_once_instead_of_stop_and_file_jobs() {
+        let mut events = Events::default();
+        events.receive("session-state", &json!({"generation":7}));
+        assert_eq!(events.receive("verification-result", &json!({"generation":7,"sequence":2,"action":"stop","status":"confirmed","discard_operation_id":"op-1"})), None);
+        assert_eq!(events.receive("file-job", &json!({"generation":7,"id":"job-1","status":"completed","discard_operation_id":"op-1"})), None);
+        let result = json!({"generation":7,"operation_id":"op-1","status":"completed","code":"discard_completed"});
+        assert_eq!(events.receive("discard-result", &result), Some(true));
+        assert_eq!(events.receive("discard-result", &result), None);
+        events.receive("session-state", &json!({"generation":7}));
+        assert_eq!(events.receive("discard-result", &result), None);
+        let stale = json!({"generation":6,"operation_id":"old","status":"outcome_unknown"});
+        assert_eq!(events.receive("discard-result", &stale), None);
+    }
     #[test]
     fn confirmed_start_does_not_play_early_success_feedback() {
         let mut events = Events::default();

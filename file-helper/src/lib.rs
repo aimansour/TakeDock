@@ -1,5 +1,7 @@
 use serde::{Deserialize, Serialize};
 mod finalized;
+pub mod guarded;
+pub mod watch;
 use sha2::{Digest, Sha256};
 use std::{
     fs::{self, File, OpenOptions},
@@ -37,6 +39,75 @@ struct Journal {
     identity: Identity,
 }
 impl Root {
+    pub fn delete_guarded(
+        &self,
+        name: &str,
+        expected: &Identity,
+        permit: impl FnOnce() -> Result<bool, String>,
+    ) -> Result<(), String> {
+        self.checked(name, expected)?;
+        if !self.video_ready(name)? {
+            return Err("video_not_finalized".into());
+        }
+        if !permit()? {
+            return Err("discard_cancelled".into());
+        }
+        self.checked(name, expected)?;
+        if !self.video_ready(name)? {
+            return Err("video_not_finalized".into());
+        }
+        self.delete(name, expected)
+    }
+    /// Inspect a stable named object without acquiring the mutation lock.
+    pub fn inspect(&self, name: &str) -> Result<Entry, String> {
+        validate_name(name)?;
+        let mut file = self.open_named(name)?;
+        let before = identity(&file)?;
+        let duration_ms = finalized::duration_ms(&mut file, before.size);
+        if identity(&file)? != before || self.stat(name)? != before {
+            return Err("source_changed".into());
+        }
+        Ok(Entry {
+            name: name.into(),
+            identity: before,
+            ready: duration_ms.is_some(),
+            duration_ms,
+        })
+    }
+    /// A metadata-only baseline; recording dispatch never waits on this scan.
+    pub fn manifest(&self) -> Result<Vec<watch::ManifestEntry>, String> {
+        #[cfg(any(target_os = "linux", target_os = "android"))]
+        let directory = {
+            use std::os::fd::AsRawFd;
+            PathBuf::from(format!("/proc/self/fd/{}", self.directory.as_raw_fd()))
+        };
+        #[cfg(not(any(target_os = "linux", target_os = "android")))]
+        let directory = self.path.clone();
+        let mut entries = Vec::new();
+        for entry in fs::read_dir(directory).map_err(err)? {
+            let entry = entry.map_err(err)?;
+            let name = entry
+                .file_name()
+                .into_string()
+                .map_err(|_| "filename_encoding")?;
+            if name.starts_with(".takedock-") {
+                continue;
+            }
+            validate_name(&name)?;
+            if !entry.file_type().map_err(err)?.is_file() {
+                return Err("not_a_regular_file".into());
+            }
+            if entries.len() >= watch::MAX_ENTRIES {
+                return Err("file_watch_too_many_entries".into());
+            }
+            entries.push(watch::ManifestEntry {
+                identity: self.stat(&name)?,
+                name,
+            });
+        }
+        entries.sort_by(|a, b| a.name.cmp(&b.name));
+        Ok(entries)
+    }
     pub fn open(path: &Path) -> Result<Self, String> {
         let mut options = OpenOptions::new();
         options.read(true);

@@ -8,6 +8,7 @@ const mocks = vi.hoisted(() => ({
   job: vi.fn(),
   save: vi.fn(),
   recording: vi.fn(),
+  discard: vi.fn(),
   cancel: vi.fn(),
   reconnect: vi.fn(),
   checkUpdate: vi.fn(),
@@ -47,7 +48,7 @@ it('unsubscribes successful listeners when one subscription fails', async () => 
   const app = createSession();
   await app.initialize();
   app.dispose();
-  expect(stop).toHaveBeenCalledTimes(6);
+  expect(stop).toHaveBeenCalledTimes(7);
 });
 it('shares settings changes and consumes asynchronous feedback without extra sounds', async () => {
   const callbacks = new Map<string, (value: unknown) => void>();
@@ -289,5 +290,123 @@ it('keeps the authoritative shared settings when save replies arrive in reverse 
   finish(first);
   await saving;
   expect(app.data.settings).toEqual(second);
+  app.dispose();
+});
+
+it('owns discard results once and ignores generic job completion for that operation', async () => {
+  const callbacks = new Map<string, (value: unknown) => void>();
+  mocks.listen.mockImplementation(
+    (name: string, callback: (value: unknown) => void) => {
+      callbacks.set(name, callback);
+      return Promise.resolve(vi.fn());
+    },
+  );
+  const take = { generation: 3, start_sequence: 1, id: 'take-1' };
+  mocks.bootstrap.mockResolvedValue({
+    session: {
+      ...initialSession,
+      generation: 3,
+      connected: true,
+      discard: {
+        take,
+        eligible: true,
+        operation_id: null,
+        reason: '',
+        phase: 'tracking',
+      },
+    },
+    settings: defaultSettings,
+    errors: [],
+    jobs: [],
+    window_name: '',
+    check_at_startup: false,
+  });
+  mocks.discard.mockResolvedValue({
+    generation: 3,
+    take,
+    operation_id: 'op-1',
+  });
+  const app = createSession();
+  await app.initialize();
+  app.discard();
+  expect(mocks.discard).toHaveBeenCalledWith(take, 3);
+  const result = {
+    generation: 3,
+    operation_id: 'op-1',
+    status: 'completed',
+    code: 'discard_completed',
+  };
+  callbacks.get('discard-result')?.(result);
+  await Promise.resolve();
+  expect(app.data.result).toBe('discard_completed');
+  expect(mocks.videos).toHaveBeenCalledTimes(1);
+  callbacks.get('file-job')?.({
+    id: 'delete-1',
+    generation: 3,
+    kind: 'delete',
+    status: 'completed',
+    discard_operation_id: 'op-1',
+    results: [],
+  });
+  callbacks.get('discard-result')?.(result);
+  expect(app.data.result).toBe('discard_completed');
+  expect(mocks.videos).toHaveBeenCalledTimes(1);
+  expect(mocks.sound).not.toHaveBeenCalled();
+  app.dispose();
+});
+it('ignores a discard rejection after a newer take replaces its request', async () => {
+  let incoming!: (value: unknown) => void;
+  mocks.listen.mockImplementation(
+    (name: string, callback: (value: unknown) => void) => {
+      if (name === 'session-state') incoming = callback;
+      return Promise.resolve(vi.fn());
+    },
+  );
+  const take = { generation: 3, start_sequence: 1, id: 'old' };
+  const session = {
+    ...initialSession,
+    generation: 3,
+    revision: 1,
+    connected: true,
+    discard: {
+      take,
+      eligible: true,
+      operation_id: null,
+      reason: '',
+      phase: 'tracking',
+    },
+  };
+  mocks.bootstrap.mockResolvedValue({
+    session,
+    settings: defaultSettings,
+    errors: [],
+    jobs: [],
+    window_name: '',
+    check_at_startup: false,
+  });
+  let reject!: (error: Error) => void;
+  mocks.discard.mockImplementation(
+    () =>
+      new Promise((_resolve, rejected) => {
+        reject = rejected;
+      }),
+  );
+  const app = createSession();
+  await app.initialize();
+  app.discard();
+  incoming({
+    ...session,
+    revision: 2,
+    command_sequence: 3,
+    discard: {
+      ...session.discard,
+      take: { generation: 3, start_sequence: 3, id: 'new' },
+    },
+  });
+  reject(new Error('old discard failed'));
+  await Promise.resolve();
+  await Promise.resolve();
+  expect(app.data.result).toBe('');
+  expect(mocks.sound).not.toHaveBeenCalled();
   app.dispose();
 });

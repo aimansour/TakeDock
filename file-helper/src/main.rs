@@ -2,9 +2,23 @@ use std::io::Write;
 use takedock_files::{Identity, Root, VIDEO_ROOT};
 fn run() -> Result<(), String> {
     let root = Root::open(std::path::Path::new(VIDEO_ROOT))?;
+    let args = std::env::args().skip(1).collect::<Vec<_>>();
+    let borrowed = args.iter().map(String::as_str).collect::<Vec<_>>();
+    match borrowed.as_slice() {
+        ["watch", stream] => {
+            return takedock_files::watch::run(&root, stream, &mut std::io::stdout().lock());
+        }
+        ["inspect", name] => {
+            println!(
+                "{}",
+                serde_json::to_string(&root.inspect(name)?).map_err(|e| e.to_string())?
+            );
+            return Ok(());
+        }
+        _ => {}
+    }
     let _lock = root.lock()?;
     root.recover()?;
-    let args = std::env::args().skip(1).collect::<Vec<_>>();
     match args
         .iter()
         .map(String::as_str)
@@ -25,6 +39,17 @@ fn run() -> Result<(), String> {
             }
         }
         ["stat", name] => println!("{}", serde_json::to_string(&root.stat(name)?).unwrap()),
+        ["delete-guarded", name, expected, operation] => {
+            let expected: Identity = serde_json::from_str(expected).map_err(|e| e.to_string())?;
+            takedock_files::guarded::serve(
+                &root,
+                name,
+                &expected,
+                operation,
+                takedock_files::guarded::read_permit_stdin,
+                &mut std::io::stdout().lock(),
+            )?;
+        }
         ["hash", name, expected] => {
             if !root.video_ready(name)? {
                 return Err("video_not_finalized".into());

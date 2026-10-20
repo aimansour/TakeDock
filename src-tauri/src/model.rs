@@ -66,6 +66,8 @@ pub struct Observation {
 
 #[derive(Debug, Clone, Serialize)]
 pub struct VerificationResult {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub discard_operation_id: Option<String>,
     pub generation: u64,
     pub sequence: u64,
     pub action: RecordingAction,
@@ -76,6 +78,7 @@ pub struct VerificationResult {
 
 #[derive(Debug, Clone, Serialize, Default)]
 pub struct SessionState {
+    pub discard: crate::discard::DiscardSnapshot,
     pub speech_readiness: SpeechReadiness,
     pub generation: u64,
     pub revision: u64,

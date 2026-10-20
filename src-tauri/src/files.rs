@@ -123,6 +123,8 @@ pub enum JobKind {
 }
 #[derive(Clone, Debug, Serialize)]
 pub struct JobEvent {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub discard_operation_id: Option<String>,
     pub id: String,
     pub generation: u64,
     pub kind: JobKind,
@@ -153,6 +155,7 @@ struct Job {
 enum Message {
     List(DeviceLease, mpsc::Sender<Result<Vec<Video>, String>>),
     Job(Box<Job>),
+    Discard(Box<crate::guarded_delete::DiscardJob>),
     Stop,
 }
 pub struct FileService {
@@ -162,6 +165,82 @@ pub struct FileService {
     sink: EventSink,
 }
 impl FileService {
+    pub fn start_discard_delete(
+        &self,
+        lease: DeviceLease,
+        video: Video,
+        operation_id: String,
+        authorize: Arc<dyn Fn() -> bool + Send + Sync>,
+        complete: Arc<dyn Fn(crate::discard::DeleteOutcome) + Send + Sync>,
+    ) -> Result<String, String> {
+        self.start_discard_delete_checked(
+            lease,
+            video,
+            operation_id,
+            Arc::new(|| true),
+            authorize,
+            complete,
+        )
+    }
+    pub(crate) fn start_discard_delete_checked(
+        &self,
+        lease: DeviceLease,
+        video: Video,
+        operation_id: String,
+        should_prepare: Arc<dyn Fn() -> bool + Send + Sync>,
+        authorize: Arc<dyn Fn() -> bool + Send + Sync>,
+        complete: Arc<dyn Fn(crate::discard::DeleteOutcome) + Send + Sync>,
+    ) -> Result<String, String> {
+        takedock_files::validate_name(&video.name)?;
+        let identity: Identity = serde_json::from_str(&video.identity).map_err(err)?;
+        if !video.ready || identity.size != video.size {
+            return Err("video_not_finalized".into());
+        }
+        if operation_id.is_empty()
+            || operation_id.len() > 128
+            || lease.cancelled.load(Ordering::Acquire)
+        {
+            return Err("discard_cancelled".into());
+        }
+        let id = uuid::Uuid::new_v4().to_string();
+        let cancel = Arc::new(AtomicBool::new(false));
+        let event = JobEvent {
+            discard_operation_id: Some(operation_id.clone()),
+            id: id.clone(),
+            generation: lease.generation,
+            kind: JobKind::Delete,
+            status: "queued".into(),
+            phase: "preparing".into(),
+            name: video.name.clone(),
+            bytes: 0,
+            total: video.size,
+            completed: 0,
+            count: 1,
+            message: String::new(),
+            results: Vec::new(),
+        };
+        self.jobs.lock().unwrap().insert(id.clone(), cancel.clone());
+        let job = crate::guarded_delete::DiscardJob {
+            should_prepare,
+            event: event.clone(),
+            lease,
+            video,
+            operation_id,
+            cancel,
+            authorize,
+            complete,
+        };
+        if self
+            .sender
+            .try_send(Message::Discard(Box::new(job)))
+            .is_err()
+        {
+            self.jobs.lock().unwrap().remove(&id);
+            return Err("file_queue_full".into());
+        }
+        emit(&self.sink, &event);
+        Ok(id)
+    }
     pub fn start(resources: PathBuf, sink: EventSink) -> Self {
         let (sender, receiver) = mpsc::sync_channel(16);
         let jobs = Arc::new(Mutex::new(HashMap::new()));
@@ -169,13 +248,14 @@ impl FileService {
         let worker_sink = sink.clone();
         let worker = thread::spawn(move || {
             let sink = worker_sink;
-            let mut remote = Remote {
-                resources,
-                deployed: 0,
-                path: String::new(),
-            };
+            let mut remote = Remote::new(resources);
             for message in receiver {
                 match message {
+                    Message::Discard(job) => {
+                        let id = job.event.id.clone();
+                        crate::guarded_delete::run(&mut remote, *job, &sink);
+                        active.lock().unwrap().remove(&id);
+                    }
                     Message::List(lease, reply) => {
                         let result = remote
                             .prepare(&lease)
@@ -268,6 +348,7 @@ impl FileService {
         let id = uuid::Uuid::new_v4().to_string();
         let cancel = Arc::new(AtomicBool::new(false));
         let event = JobEvent {
+            discard_operation_id: None,
             id: id.clone(),
             generation: lease.generation,
             kind,
@@ -332,64 +413,8 @@ impl Drop for FileService {
 fn emit(sink: &EventSink, event: &JobEvent) {
     sink("file-job", serde_json::to_value(event).unwrap())
 }
-struct Remote {
-    resources: PathBuf,
-    deployed: u64,
-    path: String,
-}
+type Remote = crate::helper::HelperClient;
 impl Remote {
-    fn prepare(&mut self, lease: &DeviceLease) -> Result<(), String> {
-        if self.deployed == lease.generation {
-            return Ok(());
-        }
-        let abi =
-            String::from_utf8(lease.output(&["shell", "getprop", "ro.product.cpu.abi"], 5000)?)
-                .map_err(err)?;
-        let abi = abi.trim();
-        if !["arm64-v8a", "armeabi-v7a", "x86_64"].contains(&abi) {
-            return Err("unsupported_device_abi".into());
-        }
-        let local = self
-            .resources
-            .join("file-helper")
-            .join(abi)
-            .join("takedock-files");
-        let digest = hash_path(&local)?;
-        let path = format!("/data/local/tmp/takedock-files-{digest}");
-        let existing = lease
-            .output(&["shell", "sha256sum", &path], 5000)
-            .ok()
-            .and_then(|data| String::from_utf8(data).ok());
-        if !existing
-            .as_deref()
-            .is_some_and(|text| text.split_whitespace().next() == Some(&digest))
-        {
-            let temporary = format!("{path}-{}", uuid::Uuid::new_v4());
-            lease.output(
-                &[
-                    "push",
-                    local.to_str().ok_or("resource_path_encoding")?,
-                    &temporary,
-                ],
-                30_000,
-            )?;
-            lease.output(&["shell", "chmod", "700", &temporary], 5000)?;
-            lease.output(&["shell", "mv", "-f", &temporary, &path], 5000)?;
-        }
-        self.path = path;
-        self.deployed = lease.generation;
-        Ok(())
-    }
-    fn command(&self, args: &[&str]) -> Result<String, String> {
-        std::iter::once(self.path.as_str())
-            .chain(args.iter().copied())
-            .map(quote)
-            .collect::<Result<Vec<_>, _>>()
-            .map(|args| args.join(" "))
-    }
-    fn output(&self, lease: &DeviceLease, args: &[&str], timeout: u64) -> Result<Vec<u8>, String> {
-        lease.output(&["exec-out", &self.command(args)?], timeout)
-    }
     fn job_output(&self, job: &Job, args: &[&str], timeout: u64) -> Result<Vec<u8>, String> {
         check(job)?;
         job.lease.adb.output_with_cancellation(
@@ -398,16 +423,6 @@ impl Remote {
             timeout,
             &[&job.lease.cancelled, &job.cancel],
         )
-    }
-    fn stat(&self, lease: &DeviceLease, video: &Video) -> Result<(), String> {
-        let identity: Identity =
-            serde_json::from_slice(&self.output(lease, &["stat", &video.name], 10_000)?)
-                .map_err(err)?;
-        let expected: Identity = serde_json::from_str(&video.identity).map_err(err)?;
-        if identity != expected {
-            return Err("source_changed".into());
-        }
-        Ok(())
     }
 }
 fn check(job: &Job) -> Result<(), String> {
@@ -419,7 +434,7 @@ fn check(job: &Job) -> Result<(), String> {
         Ok(())
     }
 }
-fn hash_path(path: &Path) -> Result<String, String> {
+pub(crate) fn hash_path(path: &Path) -> Result<String, String> {
     let mut file = std::fs::File::open(path).map_err(err)?;
     let mut hash = Sha256::new();
     let mut buffer = [0; 256 * 1024];

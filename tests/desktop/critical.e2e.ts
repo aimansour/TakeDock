@@ -16,6 +16,8 @@ import {
   existsSync,
   readFileSync,
   settingsPath,
+  waitForBaseline,
+  deleteCalls,
 } from './fixtures';
 
 describe('TakeDock release desktop acceptance', () => {
@@ -102,7 +104,7 @@ describe('TakeDock release desktop acceptance', () => {
     assert.equal(await button('Start video').isExisting(), false);
     assert.equal(
       await browser.execute(() => document.activeElement?.textContent?.trim()),
-      'Stop video',
+      'Stop',
     );
     await button('Pause video').click();
     await waitFor(() => commands().length === 2);
@@ -137,11 +139,12 @@ describe('TakeDock release desktop acceptance', () => {
     assert.equal(await $('#speech-readiness').isExisting(), false);
     unlinkSync(join(fixtureRoot, 'hold-observation'));
     await button('Start video').waitForExist();
-    assert.equal(await button('Stop video').isExisting(), false);
+    assert.equal(await button('Stop').isExisting(), false);
     // Use a fresh fixture so unobserved intermediate toggles cannot be
     // mistaken for proof of this independently confirmed Start.
     await restartFixture(true);
     await button('Start video').waitForExist();
+    await waitForBaseline();
     await button('Start video').click();
     await waitFor(
       async () =>
@@ -151,7 +154,20 @@ describe('TakeDock release desktop acceptance', () => {
     assert.equal(await $('#speech-readiness').getText(), 'Ready to speak');
     assert.equal(
       await browser.execute(() => document.activeElement?.textContent?.trim()),
-      'Stop video',
+      'Stop',
+    );
+    const choice = await $('input[name="discard-take"]');
+    await choice.waitForExist();
+    assert.equal(await choice.isSelected(), false);
+    const primary = await button('Stop');
+    await choice.click();
+    await browser.keys('Space');
+    assert.equal(await choice.isSelected(), false);
+    await browser.keys('Space');
+    assert.equal(await choice.isSelected(), true);
+    assert.equal(
+      (await button('Stop and delete')).elementId,
+      primary.elementId,
     );
     const first = await browser.getWindowHandle();
     await shortcut('n');
@@ -166,15 +182,83 @@ describe('TakeDock release desktop acceptance', () => {
         'ready',
     );
     assert.equal(commands().length, 1);
+    assert.equal(await $('input[name="discard-take"]').isSelected(), false);
+    flag('hold-finalization');
+    await browser.switchToWindow(first);
+    await button('Stop and delete').click();
+    await $('[data-discard-phase="finalizing"]').waitForExist();
+    await browser.switchToWindow(second);
+    await $('[data-discard-phase="finalizing"]').waitForExist();
+    assert.equal(await $('input[name="discard-take"]').isExisting(), false);
+    unlinkSync(join(fixtureRoot, 'hold-finalization'));
+    await $('[data-discard-phase="completed"]').waitForExist();
+    assert.equal(
+      existsSync(join(fixtureRoot, 'videos', 'take-0001.mp4')),
+      false,
+    );
+    assert.equal(deleteCalls().length, 1);
+    assert.equal(deleteCalls()[0].name, 'take-0001.mp4');
+    assert.ok(deleteCalls()[0].identity);
     await browser.closeWindow();
     await browser.switchToWindow(first);
-    await button('Stop video').click();
     await button('Start video').waitForExist();
     await waitFor(async () => !(await $('#speech-readiness').isExisting()));
+
+    await restartFixture(true, ['hold-watch-baseline']);
+    await button('Start video').waitForExist();
+    await button('Start video').click();
+    await button('Stop').waitForExist();
+    assert.equal(await $('input[name="discard-take"]').isExisting(), false);
+    await button('Stop').click();
+    await button('Start video').waitForExist();
+    assert.equal(deleteCalls().length, 0);
+    assert.equal(
+      existsSync(join(fixtureRoot, 'videos', 'take-0001.mp4')),
+      true,
+    );
+
+    await restartFixture(true, ['hold-delete-prepared']);
+    await button('Start video').waitForExist();
+    await waitForBaseline();
+    await button('Start video').click();
+    await $('input[name="discard-take"]').waitForExist();
+    await $('input[name="discard-take"]').click();
+    await button('Stop and delete').click();
+    await waitFor(() => existsSync(join(fixtureRoot, 'delete-prepared')));
+    const retained = hash(join(fixtureRoot, 'videos', 'take-0001.mp4'));
+    await button('Start video').click();
+    await waitFor(() => commands().length === 3);
+    unlinkSync(join(fixtureRoot, 'hold-delete-prepared'));
+    await waitFor(async () =>
+      (await $('main').getText()).includes('Pending deletion was cancelled.'),
+    );
+    assert.equal(hash(join(fixtureRoot, 'videos', 'take-0001.mp4')), retained);
+    assert.equal(
+      readFileSync(join(fixtureRoot, 'videos', 'take-0002.mp4'), 'utf8'),
+      'fixture-recording',
+    );
+    await button('Stop').click();
+    await button('Start video').waitForExist();
+
+    await restartFixture(true, ['drop-delete-result']);
+    await button('Start video').waitForExist();
+    await waitForBaseline();
+    await button('Start video').click();
+    await $('input[name="discard-take"]').waitForExist();
+    await $('input[name="discard-take"]').click();
+    await button('Stop and delete').click();
+    await $('[data-discard-phase="outcome_unknown"]').waitForExist();
+    assert.match(await $('main').getText(), /result could not be confirmed/);
+    assert.equal(deleteCalls().length, 1);
+    assert.equal(
+      existsSync(join(fixtureRoot, 'videos', 'take-0001.mp4')),
+      false,
+    );
   });
   it('selects two videos, hides batch rename and copies verified bytes through Rust IPC', async () => {
     await restartFixture(true);
     await button('Start video').waitForExist();
+    await waitForBaseline();
     await shortcut('v');
     await waitFor(
       async () => (await $$('tbody input[type="checkbox"]')).length === 2,
@@ -199,7 +283,7 @@ describe('TakeDock release desktop acceptance', () => {
           'ready',
       );
       assert.equal(existsSync(join(fixtureRoot, 'hold-hash')), true);
-      await button('Stop video').click();
+      await button('Stop').click();
       await waitFor(() => commands().length === 2);
       await button('Start video').waitForExist();
     } finally {
@@ -225,9 +309,60 @@ describe('TakeDock release desktop acceptance', () => {
         (await $('#activity-progress').getAttribute('value')) === '100',
     );
     assert.equal(await $('#activity-progress').getAttribute('value'), '100');
+    assert.equal(deleteCalls().length, 0);
+    assert.equal(
+      existsSync(join(fixtureRoot, 'videos', 'take-0001.mp4')),
+      true,
+    );
     assert.equal(
       (await $$('[aria-live], [role="status"], [role="alert"]')).length,
       0,
+    );
+    // Preserve the completed copy's 100% assertion before a newer cancelled
+    // job legitimately becomes the Activity panel's current operation.
+    await $(
+      '//label[span[normalize-space(.)="Select take-0001.mp4"]]/input',
+    ).click();
+    unlinkSync(join(fixtureRoot, 'hash-started'));
+    flag('hold-hash');
+    try {
+      await button('Copy to computer').click();
+      await waitFor(() => existsSync(join(fixtureRoot, 'hash-started')));
+      await button('Recording').click();
+      await button('Start video').waitForExist();
+      await button('Start video').click();
+      await $('input[name="discard-take"]').waitForExist();
+      await $('input[name="discard-take"]').click();
+      await button('Stop and delete').click();
+      await $('[data-discard-phase="deleting"]').waitForExist();
+      assert.equal(deleteCalls().length, 0);
+      assert.equal(existsSync(join(fixtureRoot, 'hold-hash')), true);
+      await button('Start video').click();
+      await waitFor(() => commands().length === 5);
+      await button('Stop').click();
+      await waitFor(() => commands().length === 6);
+    } finally {
+      if (existsSync(join(fixtureRoot, 'hold-hash')))
+        unlinkSync(join(fixtureRoot, 'hold-hash'));
+    }
+    await waitFor(() =>
+      existsSync(join(fixtureRoot, 'destination', 'take-0001.mp4')),
+    );
+    await waitFor(async () =>
+      (await $('.activity-panel').getText()).includes('Cancelled'),
+    );
+    assert.equal(deleteCalls().length, 0);
+    assert.equal(
+      existsSync(join(fixtureRoot, 'videos', 'take-0002.mp4')),
+      true,
+    );
+    assert.equal(
+      existsSync(join(fixtureRoot, 'videos', 'take-0003.mp4')),
+      true,
+    );
+    assert.equal(
+      hash(join(fixtureRoot, 'destination', 'take-0001.mp4')),
+      hash(join(fixtureRoot, 'videos', 'take-0001.mp4')),
     );
   });
   it('persists Arabic, destination and optional success sound across application restart', async () => {

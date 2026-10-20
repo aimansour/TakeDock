@@ -29,12 +29,14 @@ function video() {
     atom('moov', atom('mvhd', duration)),
   ]);
 }
-export function prepareFixture(connected = false) {
+export function prepareFixture(connected = false, flags: string[] = []) {
   fixtureRoot = join(base, randomUUID());
   mkdirSync(fixtureRoot, { recursive: true });
   mkdirSync(join(fixtureRoot, 'videos'));
   mkdirSync(join(fixtureRoot, 'destination'));
   copyFileSync(process.env.TAKEDOCK_FIXTURE_EXE!, join(fixtureRoot, 'adb.exe'));
+  flag('record-take-files');
+  for (const name of flags) flag(name);
   writeFileSync(
     join(fixtureRoot, 'devices.txt'),
     connected ? 'fixture-one\tdevice\n' : '',
@@ -58,10 +60,41 @@ export function prepareFixture(connected = false) {
     }),
   );
 }
-export async function restartFixture(connected: boolean) {
-  prepareFixture(connected);
+export async function restartFixture(connected: boolean, flags: string[] = []) {
+  prepareFixture(connected, flags);
   await browser.reloadSession();
   await $('h1').waitForExist();
+}
+// Read the existing public bootstrap command to synchronize with the actual
+// backend baseline. Capture/discard actions still go through native controls.
+export async function waitForBaseline() {
+  await waitFor(async () =>
+    browser.execute(async () => {
+      const api = (
+        window as unknown as {
+          __TAURI_INTERNALS__: {
+            invoke: (
+              command: string,
+            ) => Promise<{ session: { discard: { reason: string } } }>;
+          };
+        }
+      ).__TAURI_INTERNALS__;
+      return (
+        (await api.invoke('bootstrap')).session.discard.reason ===
+        'discard_ready_for_start'
+      );
+    }),
+  );
+}
+export function deleteCalls() {
+  const path = join(fixtureRoot, 'delete-calls.jsonl');
+  return existsSync(path)
+    ? readFileSync(path, 'utf8')
+        .trim()
+        .split('\n')
+        .filter(Boolean)
+        .map((line) => JSON.parse(line))
+    : [];
 }
 export const button = (name: string) =>
   $(`//button[normalize-space(.)=${JSON.stringify(name)}]`);
