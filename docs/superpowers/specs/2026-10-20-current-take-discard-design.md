@@ -1,8 +1,8 @@
 # Discard the current TakeDock recording
 
-Date: 2026-10-20. Status: draft for user review. The user approved the
-checkbox placement and primary-button behavior below. The remaining behavior,
-file-association limitation, and implementation plan have not been approved.
+Date: 2026-10-20. Status: approved by the user, including the file-association
+limitation, on 2026-10-20. Checkbox placement was selected first; the user then
+approved the written design. The implementation plan requires its own review.
 
 ## Intended outcome and context
 
@@ -94,7 +94,7 @@ watch overflow or transport loss, and unexplained file activity invalidate autom
 association. Retain every candidate and direct the user to Videos for explicit
 selection instead of guessing.
 
-**Provenance limitation requiring review:** this filesystem correlation assumes
+**Approved provenance limitation:** this filesystem correlation assumes
 Open Camera is configured to save to the supported directory and is its only writer
 during the managed take. Filesystem events alone cannot authenticate the creating
 application. In particular, a sole unrelated video added while Open Camera saves
