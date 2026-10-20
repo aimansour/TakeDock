@@ -187,6 +187,11 @@ fn main() {
             }
         }
         ["push", from, to] => {
+            fs::write(root.join("helper-push-started"), b"").unwrap();
+            fs::write(root.join("helper-push-pid"), std::process::id().to_string()).unwrap();
+            while root.join("hold-helper-push").exists() {
+                thread::sleep(Duration::from_millis(10));
+            }
             fs::create_dir_all(root.join("device")).unwrap();
             fs::copy(
                 from,
@@ -235,6 +240,15 @@ fn main() {
 }
 fn file_command(root: &Path, args: &[String]) -> Result<(), String> {
     let videos = takedock_files::Root::open(&root.join("videos"))?;
+    let borrowed = args.iter().map(String::as_str).collect::<Vec<_>>();
+    match borrowed.as_slice() {
+        ["watch", stream] => return watch_files(root, &videos, stream),
+        ["inspect", name] => {
+            println!("{}", serde_json::to_string(&videos.inspect(name)?).unwrap());
+            return Ok(());
+        }
+        _ => {}
+    }
     let _lock = videos.lock()?;
     videos.recover()?;
     let args = args.iter().map(String::as_str).collect::<Vec<_>>();
@@ -303,6 +317,90 @@ fn file_command(root: &Path, args: &[String]) -> Result<(), String> {
         _ => return Err("invalid_fixture_helper_command".into()),
     }
     Ok(())
+}
+fn watch_files(root: &Path, videos: &takedock_files::Root, stream: &str) -> Result<(), String> {
+    use std::{collections::BTreeMap, time::Instant};
+    use takedock_files::watch::{ManifestEntry, WatchBody, WatchFrame};
+    fs::write(root.join("watch-pid"), std::process::id().to_string()).map_err(|e| e.to_string())?;
+    fs::write(root.join("watch-started"), b"").map_err(|e| e.to_string())?;
+    if root.join("malformed-watch").exists() {
+        println!("{{\"version\":7}}");
+        io::stdout().flush().unwrap();
+        return Ok(());
+    }
+    while root.join("hold-watch-baseline").exists() {
+        thread::sleep(Duration::from_millis(10));
+    }
+    let mut sequence = 0;
+    let mut send = |body| -> Result<(), String> {
+        sequence += 1;
+        let frame = WatchFrame {
+            version: 1,
+            stream: stream.into(),
+            sequence,
+            body,
+        };
+        let mut output = io::stdout().lock();
+        serde_json::to_writer(&mut output, &frame).map_err(|e| e.to_string())?;
+        output
+            .write_all(b"\n")
+            .and_then(|_| output.flush())
+            .map_err(|e| e.to_string())
+    };
+    send(WatchBody::BaselineBegin)?;
+    let mut previous = BTreeMap::new();
+    for entry in videos.manifest()? {
+        previous.insert(entry.name.clone(), entry.identity.clone());
+        send(WatchBody::BaselineEntry { entry })?;
+    }
+    send(WatchBody::BaselineEnd)?;
+    let mut heartbeat = Instant::now();
+    loop {
+        if root.join("watch-gap").exists() {
+            let frame = WatchFrame {
+                version: 1,
+                stream: stream.into(),
+                sequence: u64::MAX,
+                body: WatchBody::Heartbeat,
+            };
+            println!("{}", serde_json::to_string(&frame).unwrap());
+            io::stdout().flush().unwrap();
+            return Ok(());
+        }
+        let current = videos
+            .manifest()?
+            .into_iter()
+            .map(|entry| (entry.name, entry.identity))
+            .collect::<BTreeMap<_, _>>();
+        for (name, identity) in &current {
+            let entry = ManifestEntry {
+                name: name.clone(),
+                identity: identity.clone(),
+            };
+            if !previous.contains_key(name) {
+                send(WatchBody::Created {
+                    entry: entry.clone(),
+                })?;
+                send(WatchBody::Closed { entry })?;
+            } else if previous.get(name) != Some(identity) {
+                send(WatchBody::Changed {
+                    entry: entry.clone(),
+                })?;
+                send(WatchBody::Closed { entry })?;
+            }
+        }
+        for name in previous.keys().filter(|name| !current.contains_key(*name)) {
+            send(WatchBody::Removed { name: name.clone() })?;
+        }
+        previous = current;
+        if heartbeat.elapsed() >= Duration::from_millis(1000)
+            && !root.join("stop-watch-heartbeats").exists()
+        {
+            send(WatchBody::Heartbeat)?;
+            heartbeat = Instant::now();
+        }
+        thread::sleep(Duration::from_millis(25));
+    }
 }
 struct SlowWriter<W: Write>(W);
 impl<W: Write> Write for SlowWriter<W> {

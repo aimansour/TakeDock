@@ -169,11 +169,7 @@ impl FileService {
         let worker_sink = sink.clone();
         let worker = thread::spawn(move || {
             let sink = worker_sink;
-            let mut remote = Remote {
-                resources,
-                deployed: 0,
-                path: String::new(),
-            };
+            let mut remote = Remote::new(resources);
             for message in receiver {
                 match message {
                     Message::List(lease, reply) => {
@@ -332,64 +328,8 @@ impl Drop for FileService {
 fn emit(sink: &EventSink, event: &JobEvent) {
     sink("file-job", serde_json::to_value(event).unwrap())
 }
-struct Remote {
-    resources: PathBuf,
-    deployed: u64,
-    path: String,
-}
+type Remote = crate::helper::HelperClient;
 impl Remote {
-    fn prepare(&mut self, lease: &DeviceLease) -> Result<(), String> {
-        if self.deployed == lease.generation {
-            return Ok(());
-        }
-        let abi =
-            String::from_utf8(lease.output(&["shell", "getprop", "ro.product.cpu.abi"], 5000)?)
-                .map_err(err)?;
-        let abi = abi.trim();
-        if !["arm64-v8a", "armeabi-v7a", "x86_64"].contains(&abi) {
-            return Err("unsupported_device_abi".into());
-        }
-        let local = self
-            .resources
-            .join("file-helper")
-            .join(abi)
-            .join("takedock-files");
-        let digest = hash_path(&local)?;
-        let path = format!("/data/local/tmp/takedock-files-{digest}");
-        let existing = lease
-            .output(&["shell", "sha256sum", &path], 5000)
-            .ok()
-            .and_then(|data| String::from_utf8(data).ok());
-        if !existing
-            .as_deref()
-            .is_some_and(|text| text.split_whitespace().next() == Some(&digest))
-        {
-            let temporary = format!("{path}-{}", uuid::Uuid::new_v4());
-            lease.output(
-                &[
-                    "push",
-                    local.to_str().ok_or("resource_path_encoding")?,
-                    &temporary,
-                ],
-                30_000,
-            )?;
-            lease.output(&["shell", "chmod", "700", &temporary], 5000)?;
-            lease.output(&["shell", "mv", "-f", &temporary, &path], 5000)?;
-        }
-        self.path = path;
-        self.deployed = lease.generation;
-        Ok(())
-    }
-    fn command(&self, args: &[&str]) -> Result<String, String> {
-        std::iter::once(self.path.as_str())
-            .chain(args.iter().copied())
-            .map(quote)
-            .collect::<Result<Vec<_>, _>>()
-            .map(|args| args.join(" "))
-    }
-    fn output(&self, lease: &DeviceLease, args: &[&str], timeout: u64) -> Result<Vec<u8>, String> {
-        lease.output(&["exec-out", &self.command(args)?], timeout)
-    }
     fn job_output(&self, job: &Job, args: &[&str], timeout: u64) -> Result<Vec<u8>, String> {
         check(job)?;
         job.lease.adb.output_with_cancellation(
@@ -398,16 +338,6 @@ impl Remote {
             timeout,
             &[&job.lease.cancelled, &job.cancel],
         )
-    }
-    fn stat(&self, lease: &DeviceLease, video: &Video) -> Result<(), String> {
-        let identity: Identity =
-            serde_json::from_slice(&self.output(lease, &["stat", &video.name], 10_000)?)
-                .map_err(err)?;
-        let expected: Identity = serde_json::from_str(&video.identity).map_err(err)?;
-        if identity != expected {
-            return Err("source_changed".into());
-        }
-        Ok(())
     }
 }
 fn check(job: &Job) -> Result<(), String> {
@@ -419,7 +349,7 @@ fn check(job: &Job) -> Result<(), String> {
         Ok(())
     }
 }
-fn hash_path(path: &Path) -> Result<String, String> {
+pub(crate) fn hash_path(path: &Path) -> Result<String, String> {
     let mut file = std::fs::File::open(path).map_err(err)?;
     let mut hash = Sha256::new();
     let mut buffer = [0; 256 * 1024];
