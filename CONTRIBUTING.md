@@ -36,7 +36,7 @@ npm run format:check
 npm run check
 npm run test:ui
 npm run build
-node --test scripts/release-gate.test.mjs scripts/prepare-publication.test.mjs tests/desktop/tooling.test.mjs
+node --test scripts/release-gate.test.mjs scripts/prepare-publication.test.mjs
 ./scripts/check-updater.ps1
 ./scripts/setup-desktop-drivers.ps1
 npm run test:desktop

@@ -270,7 +270,7 @@ npm run format:check
 npm run check
 npm run test:ui
 npm run build
-node --test scripts/release-gate.test.mjs scripts/prepare-publication.test.mjs tests/desktop/tooling.test.mjs
+node --test scripts/release-gate.test.mjs scripts/prepare-publication.test.mjs
 npm run desktop:build -- --no-bundle
 ./scripts/check-updater.ps1
 ./scripts/setup-desktop-drivers.ps1
@@ -291,5 +291,9 @@ Coverage map: persistence/migration → Task 1; timing and cancellation → Task
 
 The user approved the plan and chose **Native** on 2026-10-19. Implementation,
 the one independent review, its regression-tested correction, and the amended
-real-device acceptance are complete. Integration remains the user's decision;
-the other requested components remain listed in the spec.
+real-device acceptance are complete. The user subsequently authorized pushing
+and merging the branch. The existing npm audit gate required the separately
+approved [20 October desktop-tooling migration](../../research/2026-10-20-desktop-test-dependencies.md).
+That migration retires the old extractor-only test from the current commands
+above and records the additional build acceptance. The other requested
+components remain listed in the spec.
