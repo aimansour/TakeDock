@@ -309,8 +309,11 @@ impl Shared {
                             }
                             WatchUpdate::Inspection {
                                 operation_id,
+                                name,
                                 entry,
-                            } => model.discard.inspected(&operation_id, entry, shared.now()),
+                            } => model
+                                .discard
+                                .inspected(&operation_id, &name, entry, shared.now()),
                             WatchUpdate::Lost(_) => {
                                 model.file_evidence = None;
                                 model.cancel_discard("discard_file_history_lost");

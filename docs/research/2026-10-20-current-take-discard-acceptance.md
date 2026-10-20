@@ -3,8 +3,9 @@
 This table records local pre-review evidence at `c283d7a`. The user subsequently
 authorized GitHub CI; corrected-head software validation is tracked in
 [draft PR #19 checks](https://github.com/wip-bunker-42/TakeDock/pull/19/checks).
-Physical acceptance remains **incomplete**. No release tag, publication,
-installer installation or physical-phone trial was run.
+Physical acceptance remains **incomplete**. At that checkpoint no release tag,
+publication, installer installation or physical-phone trial had run. Subsequent
+physical findings are recorded below.
 
 | Gate | Actual result |
 | --- | --- |
@@ -81,6 +82,30 @@ The test decoder is a fixture peer; actual ffmpeg decoding and Android watch
 delivery still require the [coordinated physical acceptance](../testing/current-take-discard.md).
 The proxy refuses unallowlisted identities and backs up/fully decodes dedicated
 clips before starting the remote five-second permit wait.
+
+## Physical trial finding: MediaStore finalization rename
+
+After explicit physical-trial approval, wireless pairing succeeded on the owned
+Android phone. The normal discard stopped recording but retained the original
+with `discard_file_history_lost`; no deletion was forwarded. A paused/resumed
+dedicated take with ordinary Stop reproduced the watch loss. An independent real
+watch observed creation/updates/close of a hidden pending video and loss at its
+final rename. The post-Stop manifest proved the same device/inode under its final
+name. All four preexisting files retained exact identities and SHA-256 hashes.
+Both new test clips were copied locally, matched against remote SHA-256, fully
+decoded with real ffmpeg, and rechecked for unchanged remote identities; both
+originals remain on the phone.
+
+The helper's blanket rejection of rename events prevented this normal Android
+MediaStore lifecycle. A strict matched-cookie same-root rename event now preserves
+identity continuity while rejecting unmatched/cross-root/overwriting moves.
+Finalization uses the new name and ignores stale old-name inspection results;
+already queued uncommitted deletion is cancelled. The real Linux regression first
+failed with `lost` instead of `renamed`, and the queued-delete regression first
+failed by authorizing its old name. Physical success and corrected-head full CI
+must still be recorded after rebuilding; the earlier green run does not cover
+this fix. Temporary application settings were restored during the fix, and the
+wireless connection/pairing are retained at the user's request.
 
 The implementation remains on `abdo/current-take-discard-implementation` in its
 managed worktree. Local test logs are retained in this plan's ignored workspace;

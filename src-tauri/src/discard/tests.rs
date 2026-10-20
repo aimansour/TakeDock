@@ -68,6 +68,62 @@ fn managed_take() -> (DiscardMachine, TakeToken) {
     machine.verification(&result(1, RecordingAction::Start, "confirmed"), 100);
     (machine, take)
 }
+
+fn renamed(from: &str, name: &str, inode: u64, sequence: u64) -> WatchFrame {
+    serde_json::from_value(serde_json::json!({"version":1,"stream":"watch-7","sequence":sequence,
+        "body":{"type":"renamed","from":from,"entry":{"name":name,"identity":serde_json::to_string(&identity(inode,100)).unwrap()}}})).unwrap()
+}
+
+#[test]
+fn finalized_pending_rename_preserves_take_and_restarts_exact_inspections() {
+    let (mut machine, operation) = finalizing();
+    assert!(
+        matches!(machine.poll(900).as_slice(), [DiscardEffect::Inspect { name, .. }] if name == "take.mp4")
+    );
+    machine.file_frame(&renamed("take.mp4", "final.mp4", 9, 5), 901);
+    machine.inspected(&operation, "take.mp4", Err("old_name_gone".into()), 902);
+    assert_eq!(machine.snapshot().phase, DiscardPhase::Finalizing);
+    assert!(
+        matches!(machine.poll(902).as_slice(), [DiscardEffect::Inspect { name, .. }] if name == "final.mp4")
+    );
+    let mut final_entry = entry();
+    final_entry.name = "final.mp4".into();
+    machine.inspected(&operation, "final.mp4", Ok(final_entry.clone()), 903);
+    assert!(machine.poll(1152).is_empty());
+    assert!(
+        matches!(machine.poll(1153).as_slice(), [DiscardEffect::Inspect { name, .. }] if name == "final.mp4")
+    );
+    machine.inspected(&operation, "final.mp4", Ok(final_entry), 1154);
+    assert!(
+        matches!(machine.poll(1154).as_slice(), [DiscardEffect::Delete { video, .. }] if video.name == "final.mp4")
+    );
+}
+
+#[test]
+fn rename_cannot_adopt_a_replacement_preexisting_target_or_untracked_source() {
+    for (from, target, inode) in [
+        ("take.mp4", "final.mp4", 10),
+        ("other.mp4", "final.mp4", 9),
+        ("take.mp4", "old.mp4", 9),
+        ("take.mp4", "final.txt", 9),
+    ] {
+        let mut baseline = evidence();
+        Arc::make_mut(&mut baseline.entries).insert("old.mp4".into(), identity(3, 100));
+        let mut machine = DiscardMachine::new(7);
+        machine.start_queued(token(1), Some(baseline), true, 1);
+        machine.file_frame(&created("take.mp4", 9, 4), 100);
+        machine.file_frame(&renamed(from, target, inode, 5), 101);
+        assert!(!machine.snapshot().eligible);
+    }
+}
+
+#[test]
+fn rename_cancels_an_uncommitted_queued_delete_instead_of_authorizing_its_old_name() {
+    let (mut machine, operation) = prepared_delete();
+    machine.file_frame(&renamed("take.mp4", "final.mp4", 9, 5), 1153);
+    assert!(!machine.authorize_delete(&operation));
+    assert_eq!(machine.snapshot().phase, DiscardPhase::Retained);
+}
 fn finalizing() -> (DiscardMachine, String) {
     let (mut machine, take) = managed_take();
     machine.file_frame(&created("take.mp4", 9, 4), 110);
@@ -94,12 +150,12 @@ fn prepared_delete() -> (DiscardMachine, String) {
         machine.poll(900).as_slice(),
         [DiscardEffect::Inspect { .. }]
     ));
-    machine.inspected(&operation, Ok(entry()), 901);
+    machine.inspected(&operation, "take.mp4", Ok(entry()), 901);
     assert!(matches!(
         machine.poll(1151).as_slice(),
         [DiscardEffect::Inspect { .. }]
     ));
-    machine.inspected(&operation, Ok(entry()), 1152);
+    machine.inspected(&operation, "take.mp4", Ok(entry()), 1152);
     assert!(matches!(
         machine.poll(1152).as_slice(),
         [DiscardEffect::Delete { .. }]
@@ -220,7 +276,7 @@ fn watch_sequence_gap_permanently_invalidates_take() {
 fn second_inspection_requires_250ms_and_exact_identity() {
     let (mut machine, operation) = finalizing();
     machine.poll(900);
-    machine.inspected(&operation, Ok(entry()), 901);
+    machine.inspected(&operation, "take.mp4", Ok(entry()), 901);
     assert!(machine.poll(1150).is_empty());
     assert!(matches!(
         machine.poll(1151).as_slice(),
@@ -228,7 +284,7 @@ fn second_inspection_requires_250ms_and_exact_identity() {
     ));
     let mut changed = entry();
     changed.identity.size += 1;
-    machine.inspected(&operation, Ok(changed), 1152);
+    machine.inspected(&operation, "take.mp4", Ok(changed), 1152);
     assert!(machine.poll(1152).is_empty());
     assert_eq!(machine.snapshot().phase, DiscardPhase::Retained);
 }

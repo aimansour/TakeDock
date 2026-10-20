@@ -211,6 +211,37 @@ impl DiscardMachine {
                     false
                 }
             }
+            WatchBody::Renamed { from, entry } => {
+                let supported = entry.name.rsplit('.').next().is_some_and(|ext| {
+                    ["mp4", "3gp", "m4v", "mov", "webm", "mkv"]
+                        .contains(&ext.to_lowercase().as_str())
+                });
+                if supported
+                    && !self
+                        .operation
+                        .as_ref()
+                        .is_some_and(|operation| operation.phase == DiscardPhase::Deleting)
+                    && !baseline.entries.contains_key(&entry.name)
+                    && take.candidate.as_ref().is_some_and(|candidate| {
+                        candidate.name == *from
+                            && candidate.identity.device == entry.identity.device
+                            && candidate.identity.inode == entry.identity.inode
+                    })
+                {
+                    take.candidate = Some(entry.clone());
+                    if let Some(operation) = &mut self.operation
+                        && operation.phase == DiscardPhase::Finalizing
+                    {
+                        operation.inspection_pending = false;
+                        operation.stable = None;
+                        operation.video = None;
+                        operation.next_inspect = now_ms;
+                    }
+                    true
+                } else {
+                    false
+                }
+            }
             _ => false,
         };
         if !valid {
@@ -311,13 +342,24 @@ impl DiscardMachine {
             operation.stop_sequence = Some(sequence);
         }
     }
-    pub fn inspected(&mut self, operation_id: &str, entry: Result<Entry, String>, now_ms: u64) {
+    pub fn inspected(
+        &mut self,
+        operation_id: &str,
+        name: &str,
+        entry: Result<Entry, String>,
+        now_ms: u64,
+    ) {
         let Some(operation) = &mut self.operation else {
             return;
         };
         if operation.receipt.operation_id != operation_id
             || operation.phase != DiscardPhase::Finalizing
             || !operation.inspection_pending
+            || self
+                .take
+                .as_ref()
+                .and_then(|take| take.candidate.as_ref())
+                .is_none_or(|candidate| candidate.name != name)
         {
             return;
         }

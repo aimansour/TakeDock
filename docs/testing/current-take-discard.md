@@ -8,6 +8,14 @@ Missing/ambiguous evidence disables automatic deletion for that take. Multiple
 video segments remain for explicit selection in Videos; no segment is partially
 discarded. Ordinary recording remains available when file watching is unavailable.
 
+Android MediaStore may publish a `.pending-*.mp4` take by renaming it at Stop.
+The helper emits `Renamed { from, entry }` only for a matched, nonzero inotify
+cookie pair inside the watched root, with the same device/inode and no existing
+destination. The take must already track that exact source. Cross-root, unmatched,
+overwriting, replacement or unexplained moves still invalidate association.
+Finalization restarts both exact inspections at the new name; results for the old
+name are ignored. A rename after deletion was queued cancels uncommitted work.
+
 The native **Delete this take** checkbox starts unchecked. Space selects it;
 the same primary button becomes **Stop and delete**. Enter/click sends one
 discard request. Each window owns its selection; all windows share backend

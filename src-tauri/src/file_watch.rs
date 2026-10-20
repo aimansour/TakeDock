@@ -29,6 +29,7 @@ pub enum WatchUpdate {
     },
     Inspection {
         operation_id: String,
+        name: String,
         entry: Result<Entry, String>,
     },
     Lost(String),
@@ -162,6 +163,7 @@ impl FileWatch {
                 inspecting.pending.lock().unwrap().remove(&request);
                 inspecting.send(WatchUpdate::Inspection {
                     operation_id: request.0,
+                    name: request.1,
                     entry,
                 });
             }
@@ -321,6 +323,22 @@ fn read_watch(
                     if Arc::make_mut(&mut current.entries).remove(name).is_none() {
                         return Err("file_watch_protocol".into());
                     }
+                }
+                WatchBody::Renamed { from, entry } => {
+                    let current = evidence
+                        .as_mut()
+                        .filter(|e| e.complete)
+                        .ok_or("file_watch_protocol")?;
+                    let entries = Arc::make_mut(&mut current.entries);
+                    let old = entries.get(from).ok_or("file_watch_protocol")?;
+                    if entries.contains_key(&entry.name)
+                        || old.device != entry.identity.device
+                        || old.inode != entry.identity.inode
+                    {
+                        return Err("file_watch_protocol".into());
+                    }
+                    entries.remove(from);
+                    entries.insert(entry.name.clone(), entry.identity.clone());
                 }
                 WatchBody::Heartbeat => {
                     if evidence.as_ref().is_none_or(|e| !e.complete) {

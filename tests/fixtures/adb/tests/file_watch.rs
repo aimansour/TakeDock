@@ -79,7 +79,7 @@ fn watch_and_inspect_preserve_unicode_identity() {
     assert_eq!(entries["رحلة.mp4"], expected);
     watch.inspect("op-1".into(), "رحلة.mp4".into()).unwrap();
     wait(|| {
-        updates.lock().unwrap().iter().any(|update| matches!(update, WatchUpdate::Inspection { operation_id, entry: Ok(entry) } if operation_id == "op-1" && entry.identity == expected && entry.ready))
+        updates.lock().unwrap().iter().any(|update| matches!(update, WatchUpdate::Inspection { operation_id, entry: Ok(entry), .. } if operation_id == "op-1" && entry.identity == expected && entry.ready))
     });
     std::fs::write(fixture.video("new.mp4"), movie()).unwrap();
     wait(|| {

@@ -179,6 +179,146 @@ mod native {
     }
 
     #[test]
+    fn linux_watch_resolves_a_rename_already_queued_with_creation_and_close() {
+        struct Batch {
+            inner: Lines,
+            path: std::path::PathBuf,
+            buffer: Vec<u8>,
+            created: bool,
+        }
+        impl Write for Batch {
+            fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+                self.inner.write_all(bytes)?;
+                self.buffer.extend(bytes);
+                while let Some(end) = self.buffer.iter().position(|b| *b == b'\n') {
+                    let line: Vec<_> = self.buffer.drain(..=end).collect();
+                    let frame: WatchFrame = serde_json::from_slice(&line).unwrap();
+                    if matches!(frame.body, WatchBody::BaselineEnd) && !self.created {
+                        self.created = true;
+                        fs::write(self.path.join(".pending-take.mp4"), movie()).unwrap();
+                        fs::rename(
+                            self.path.join(".pending-take.mp4"),
+                            self.path.join("final.mp4"),
+                        )
+                        .unwrap();
+                    }
+                }
+                Ok(bytes.len())
+            }
+            fn flush(&mut self) -> io::Result<()> {
+                Ok(())
+            }
+        }
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().to_owned();
+        let (sender, receiver) = mpsc::channel();
+        let worker = thread::spawn(move || {
+            watch::run(
+                &Root::open(&path).unwrap(),
+                "s",
+                &mut Batch {
+                    inner: Lines {
+                        buffer: Vec::new(),
+                        sender,
+                    },
+                    path,
+                    buffer: Vec::new(),
+                    created: false,
+                },
+            )
+        });
+        next(&receiver, |body| matches!(body, WatchBody::BaselineEnd));
+        next(&receiver, |body| matches!(body, WatchBody::Created { .. }));
+        let renamed = next(&receiver, |body| {
+            serde_json::to_value(body).unwrap()["type"] == "renamed"
+        });
+        assert_eq!(
+            serde_json::to_value(renamed.body).unwrap()["entry"]["name"],
+            "final.mp4"
+        );
+        drop(receiver);
+        assert!(worker.join().unwrap().is_err());
+    }
+
+    #[test]
+    fn linux_watch_pairs_same_inode_finalization_rename() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().to_owned();
+        let watching = path.clone();
+        let (sender, receiver) = mpsc::channel();
+        let worker = thread::spawn(move || {
+            watch::run(
+                &Root::open(&watching).unwrap(),
+                "s",
+                &mut Lines {
+                    buffer: Vec::new(),
+                    sender,
+                },
+            )
+        });
+        next(&receiver, |body| matches!(body, WatchBody::BaselineEnd));
+        fs::write(path.join(".pending-123-take.mp4"), movie()).unwrap();
+        next(&receiver, |body| matches!(body, WatchBody::Closed { .. }));
+        let before = Root::open(&path)
+            .unwrap()
+            .stat(".pending-123-take.mp4")
+            .unwrap();
+        fs::rename(path.join(".pending-123-take.mp4"), path.join("take.mp4")).unwrap();
+        let event = next(&receiver, |body| !matches!(body, WatchBody::Heartbeat));
+        let body = serde_json::to_value(&event.body).unwrap();
+        assert_eq!(
+            body["type"], "renamed",
+            "a matched same-root rename must retain continuity"
+        );
+        assert_eq!(body["from"], ".pending-123-take.mp4");
+        let identity: takedock_files::Identity =
+            serde_json::from_str(body["entry"]["identity"].as_str().unwrap()).unwrap();
+        assert_eq!(
+            (identity.device, identity.inode),
+            (before.device, before.inode)
+        );
+        assert_eq!(body["entry"]["name"], "take.mp4");
+        drop(receiver);
+        assert!(worker.join().unwrap().is_err());
+    }
+
+    #[test]
+    fn linux_watch_rejects_cross_root_moves_and_rename_over_existing_entry() {
+        for action in ["in", "out", "overwrite"] {
+            let directory = tempfile::tempdir().unwrap();
+            let path = directory.path().join("videos");
+            fs::create_dir(&path).unwrap();
+            fs::write(path.join("source.mp4"), movie()).unwrap();
+            fs::write(path.join("target.mp4"), movie()).unwrap();
+            fs::write(directory.path().join("outside.mp4"), movie()).unwrap();
+            let watching = path.clone();
+            let (sender, receiver) = mpsc::channel();
+            let worker = thread::spawn(move || {
+                watch::run(
+                    &Root::open(&watching).unwrap(),
+                    "s",
+                    &mut Lines {
+                        buffer: Vec::new(),
+                        sender,
+                    },
+                )
+            });
+            next(&receiver, |body| matches!(body, WatchBody::BaselineEnd));
+            match action {
+                "in" => {
+                    fs::rename(directory.path().join("outside.mp4"), path.join("new.mp4")).unwrap()
+                }
+                "out" => {
+                    fs::rename(path.join("source.mp4"), directory.path().join("out.mp4")).unwrap()
+                }
+                _ => fs::rename(path.join("source.mp4"), path.join("target.mp4")).unwrap(),
+            }
+            next(&receiver, |body| matches!(body, WatchBody::Lost { .. }));
+            assert!(worker.join().unwrap().is_err());
+        }
+    }
+
+    #[test]
     fn linux_watch_reports_creation_close_and_root_loss() {
         let parent = tempfile::tempdir().unwrap();
         let path = parent.path().join("videos");

@@ -33,6 +33,7 @@ pub enum WatchBody {
     Created { entry: ManifestEntry },
     Changed { entry: ManifestEntry },
     Closed { entry: ManifestEntry },
+    Renamed { from: String, entry: ManifestEntry },
     Removed { name: String },
     Lost { code: String },
     Heartbeat,
@@ -63,6 +64,13 @@ pub fn decode_frame(line: &[u8]) -> Result<WatchFrame, String> {
         | WatchBody::Created { entry }
         | WatchBody::Changed { entry }
         | WatchBody::Closed { entry } => validate_name(&entry.name)?,
+        WatchBody::Renamed { from, entry } => {
+            validate_name(from)?;
+            validate_name(&entry.name)?;
+            if from == &entry.name {
+                return Err("file_watch_protocol".into());
+            }
+        }
         WatchBody::Removed { name } => validate_name(name)?,
         _ => {}
     }
@@ -88,6 +96,7 @@ pub fn run(root: &Root, stream: &str, output: &mut impl Write) -> Result<(), Str
 mod native {
     use super::*;
     use std::{
+        collections::BTreeMap,
         ffi::CString,
         io,
         os::fd::{AsRawFd, FromRawFd, OwnedFd},
@@ -99,6 +108,7 @@ mod native {
     }
     struct Event {
         mask: u32,
+        cookie: u32,
         name: Option<String>,
     }
     impl Watch {
@@ -188,6 +198,7 @@ mod native {
                     {
                         events.push(Event {
                             mask: event.mask,
+                            cookie: event.cookie,
                             name,
                         });
                     }
@@ -214,6 +225,25 @@ mod native {
             Ok(())
         }
     }
+    // A name can already have changed by the time a queued close/modify is read.
+    // Resolve only an explicit unique in-batch kernel cookie pair, never a scan.
+    fn paired_destination<'a>(events: &'a [Event], from: &str) -> Option<&'a str> {
+        let mut sources = events
+            .iter()
+            .filter(|e| e.mask & libc::IN_MOVED_FROM != 0 && e.name.as_deref() == Some(from));
+        let source = sources.next()?;
+        if source.cookie == 0 || sources.next().is_some() {
+            return None;
+        }
+        let mut targets = events
+            .iter()
+            .filter(|e| e.mask & libc::IN_MOVED_TO != 0 && e.cookie == source.cookie);
+        let target = targets.next()?.name.as_deref()?;
+        if targets.next().is_some() || target == from {
+            return None;
+        }
+        Some(target)
+    }
     fn emit(
         output: &mut impl Write,
         stream: &str,
@@ -237,9 +267,12 @@ mod native {
         let watcher = Watch::open(root)?;
         let mut sequence = 0;
         let mut complete = false;
+        let mut known = BTreeMap::new();
         for _ in 0..3 {
+            known.clear();
             emit(output, stream, &mut sequence, WatchBody::BaselineBegin)?;
             for entry in root.manifest()? {
+                known.insert(entry.name.clone(), entry.identity.clone());
                 emit(
                     output,
                     stream,
@@ -266,39 +299,97 @@ mod native {
             return Err("file_watch_unstable_baseline".into());
         }
         let mut heartbeat = Instant::now();
+        let mut pending: Option<(u32, String, crate::Identity, Instant)> = None;
         loop {
-            watcher.wait(Duration::from_millis(1000).saturating_sub(heartbeat.elapsed()))?;
-            for event in watcher.drain()? {
+            let mut wait = Duration::from_millis(1000).saturating_sub(heartbeat.elapsed());
+            if let Some((_, _, _, since)) = &pending {
+                wait = wait.min(Duration::from_millis(250).saturating_sub(since.elapsed()));
+            }
+            watcher.wait(wait)?;
+            let events = watcher.drain()?;
+            for event in &events {
                 let bad = libc::IN_Q_OVERFLOW
                     | libc::IN_IGNORED
                     | libc::IN_UNMOUNT
                     | libc::IN_DELETE_SELF
                     | libc::IN_MOVE_SELF
-                    | libc::IN_MOVED_FROM
-                    | libc::IN_MOVED_TO
                     | libc::IN_ISDIR;
+                let lost = || WatchBody::Lost {
+                    code: "file_watch_history_lost".into(),
+                };
                 let body = if event.mask & bad != 0 {
                     WatchBody::Lost {
                         code: "file_watch_history_lost".into(),
                     }
-                } else if let Some(name) = event.name {
-                    validate_name(&name)?;
-                    if event.mask & libc::IN_DELETE != 0 {
-                        WatchBody::Removed { name }
+                } else if let Some(name) = &event.name {
+                    validate_name(name)?;
+                    if event.mask & libc::IN_MOVED_TO != 0 {
+                        if let Some((cookie, from, previous, _)) = pending.take()
+                            && event.cookie == cookie
+                            && cookie != 0
+                            && !known.contains_key(name)
+                        {
+                            let identity = root.stat(name)?;
+                            if identity.device == previous.device
+                                && identity.inode == previous.inode
+                            {
+                                known.insert(name.clone(), identity.clone());
+                                emit(
+                                    output,
+                                    stream,
+                                    &mut sequence,
+                                    WatchBody::Renamed {
+                                        from,
+                                        entry: ManifestEntry {
+                                            name: name.clone(),
+                                            identity,
+                                        },
+                                    },
+                                )?;
+                                continue;
+                            }
+                        }
+                        lost()
+                    } else if pending.is_some() {
+                        lost()
+                    } else if event.mask & libc::IN_MOVED_FROM != 0 {
+                        if let Some(previous) = known.remove(name).filter(|_| event.cookie != 0) {
+                            pending = Some((event.cookie, name.clone(), previous, Instant::now()));
+                            continue;
+                        }
+                        lost()
                     } else {
-                        let entry = ManifestEntry {
-                            identity: root.stat(&name)?,
-                            name,
-                        };
-                        if event.mask & libc::IN_CREATE != 0 {
-                            WatchBody::Created { entry }
-                        } else if event.mask & libc::IN_CLOSE_WRITE != 0 {
-                            WatchBody::Closed { entry }
-                        } else if event.mask & (libc::IN_MODIFY | libc::IN_ATTRIB) != 0 {
-                            WatchBody::Changed { entry }
+                        if event.mask & libc::IN_DELETE != 0 {
+                            known.remove(name);
+                            WatchBody::Removed { name: name.clone() }
                         } else {
-                            WatchBody::Lost {
-                                code: "file_watch_unknown_event".into(),
+                            let identity = root.stat(name).or_else(|error| {
+                                paired_destination(&events, name)
+                                    .ok_or(error)
+                                    .and_then(|target| root.stat(target))
+                            })?;
+                            let entry = ManifestEntry {
+                                identity,
+                                name: name.clone(),
+                            };
+                            if known.get(name).is_some_and(|old| {
+                                old.device != entry.identity.device
+                                    || old.inode != entry.identity.inode
+                            }) {
+                                emit(output, stream, &mut sequence, lost())?;
+                                return Err("file_watch_history_lost".into());
+                            }
+                            known.insert(name.clone(), entry.identity.clone());
+                            if event.mask & libc::IN_CREATE != 0 {
+                                WatchBody::Created { entry }
+                            } else if event.mask & libc::IN_CLOSE_WRITE != 0 {
+                                WatchBody::Closed { entry }
+                            } else if event.mask & (libc::IN_MODIFY | libc::IN_ATTRIB) != 0 {
+                                WatchBody::Changed { entry }
+                            } else {
+                                WatchBody::Lost {
+                                    code: "file_watch_unknown_event".into(),
+                                }
                             }
                         }
                     }
@@ -312,6 +403,20 @@ mod native {
                 if lost {
                     return Err("file_watch_history_lost".into());
                 }
+            }
+            if pending
+                .as_ref()
+                .is_some_and(|(_, _, _, since)| since.elapsed() >= Duration::from_millis(250))
+            {
+                emit(
+                    output,
+                    stream,
+                    &mut sequence,
+                    WatchBody::Lost {
+                        code: "file_watch_unmatched_move".into(),
+                    },
+                )?;
+                return Err("file_watch_unmatched_move".into());
             }
             if heartbeat.elapsed() >= Duration::from_millis(1000) {
                 emit(output, stream, &mut sequence, WatchBody::Heartbeat)?;
