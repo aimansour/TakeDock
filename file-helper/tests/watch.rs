@@ -4,6 +4,35 @@ use takedock_files::{
     watch::{WatchBody, decode_frame},
 };
 
+#[test]
+fn watch_roundtrip_preserves_nanoseconds_without_numeric_coercion() {
+    use takedock_files::{
+        Identity,
+        watch::{ManifestEntry, WatchFrame},
+    };
+    let identity = Identity {
+        device: 1,
+        inode: 9,
+        size: 0,
+        modified_ns: (1u128 << 80) + 7,
+        changed_ns: (1u128 << 80) + 11,
+    };
+    let message = WatchFrame {
+        version: 1,
+        stream: "s".into(),
+        sequence: 4,
+        body: WatchBody::Created {
+            entry: ManifestEntry {
+                name: "take.mp4".into(),
+                identity: identity.clone(),
+            },
+        },
+    };
+    let bytes = serde_json::to_vec(&message).unwrap();
+    let parsed = decode_frame(&bytes).unwrap();
+    assert!(matches!(parsed.body, WatchBody::Created { entry } if entry.identity == identity));
+}
+
 fn movie() -> Vec<u8> {
     fn atom(kind: &[u8; 4], payload: &[u8]) -> Vec<u8> {
         let mut bytes = ((payload.len() + 8) as u32).to_be_bytes().to_vec();

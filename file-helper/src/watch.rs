@@ -9,7 +9,20 @@ pub const MAX_ENTRIES: usize = 10_000;
 #[serde(deny_unknown_fields)]
 pub struct ManifestEntry {
     pub name: String,
+    #[serde(with = "opaque_identity")]
     pub identity: Identity,
+}
+mod opaque_identity {
+    use super::Identity;
+    use serde::{Deserialize, Deserializer, Serializer};
+    pub fn serialize<S: Serializer>(identity: &Identity, serializer: S) -> Result<S::Ok, S::Error> {
+        let text = serde_json::to_string(identity).map_err(serde::ser::Error::custom)?;
+        serializer.serialize_str(&text)
+    }
+    pub fn deserialize<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Identity, D::Error> {
+        let text = String::deserialize(deserializer)?;
+        serde_json::from_str(&text).map_err(serde::de::Error::custom)
+    }
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
