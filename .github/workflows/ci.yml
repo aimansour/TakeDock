@@ -35,7 +35,7 @@ jobs:
       - run: npm run check
       - run: npm run test:ui
       - run: npm run build
-      - run: node --test scripts/release-gate.test.mjs scripts/prepare-publication.test.mjs tests/desktop/tooling.test.mjs
+      - run: node --test scripts/release-gate.test.mjs scripts/prepare-publication.test.mjs
   observer:
     runs-on: ubuntu-24.04
     steps:

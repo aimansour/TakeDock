@@ -218,6 +218,12 @@ describe('TakeDock release desktop acceptance', () => {
         hash(join(fixtureRoot, 'videos', name)),
       );
     await waitFor(async () => (await $('main').getText()).includes('2/2'));
+    // The per-file 2/2 event can precede the job's terminal event. During
+    // verification the progress element is intentionally indeterminate.
+    await waitFor(
+      async () =>
+        (await $('#activity-progress').getAttribute('value')) === '100',
+    );
     assert.equal(await $('#activity-progress').getAttribute('value'), '100');
     assert.equal(
       (await $$('[aria-live], [role="status"], [role="alert"]')).length,

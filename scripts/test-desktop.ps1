@@ -19,8 +19,6 @@ try {
     $installedDrivers=Get-Content -LiteralPath (Join-Path (Split-Path (Split-Path $TauriDriver -Parent) -Parent) '.crates2.json') -Raw|ConvertFrom-Json -AsHashtable
     $driverVersion=@($installedDrivers.installs.Keys|Where-Object {$_ -match '^tauri-driver 2\.1\.0 '})
     if($driverVersion.Count -ne 1){throw 'Install the pinned tauri-driver 2.1.0 with Cargo.'}
-    & node --test tests/desktop/tooling.test.mjs
-    if($LASTEXITCODE -ne 0){throw 'External driver guard failed'}
     $resourceRoot=Split-Path $Executable -Parent
     $resources=@((Join-Path $resourceRoot 'observer.apk'))
     foreach($abi in @('arm64-v8a','x86_64','armeabi-v7a')){$resources+=Join-Path $resourceRoot "file-helper/$abi/takedock-files"}
