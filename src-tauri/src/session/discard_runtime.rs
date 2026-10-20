@@ -186,6 +186,19 @@ impl Shared {
                         continue;
                     };
                     let authorizer = Arc::downgrade(self);
+                    let preparer = Arc::downgrade(self);
+                    let preparation_id = operation_id.clone();
+                    let should_prepare = Arc::new(move || {
+                        preparer.upgrade().is_some_and(|shared| {
+                            shared.current(generation)
+                                && shared
+                                    .model
+                                    .lock()
+                                    .unwrap()
+                                    .discard
+                                    .delete_pending(&preparation_id)
+                        })
+                    });
                     let authorization_id = operation_id.clone();
                     let authorize = Arc::new(move || {
                         let Some(shared) = authorizer.upgrade() else {
@@ -225,10 +238,11 @@ impl Shared {
                     });
                     if services
                         .files
-                        .start_discard_delete(
+                        .start_discard_delete_checked(
                             lease,
                             video,
                             operation_id.clone(),
+                            should_prepare,
                             authorize,
                             complete,
                         )

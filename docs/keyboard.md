@@ -47,3 +47,12 @@ feedback so the distinct PC cue remains the signal to begin speaking.
 Failures use a falling two-note sound. A verification timeout indicates an
 unconfirmed command: inspect the phone before reconnecting or taking another
 action. TakeDock never automatically retries a camera toggle.
+
+For an eligible take, Tab to **Delete this take**, press Space, then activate
+the same **Stop and delete** button with Enter/Space. Selecting the checkbox
+alone performs no action. Selection belongs to this window and resets for a new
+take, connection or reopened panel. Ctrl+Shift+R always starts/stops normally,
+including while the checkbox is selected. Progress/results are ordinary text
+with no automatic announcements. Missing/split/ambiguous file evidence leaves
+ordinary Stop available; use explicit selection and confirmation in Videos.
+An unknown deletion result requires inspecting Videos before further action.

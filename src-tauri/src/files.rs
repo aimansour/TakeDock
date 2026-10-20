@@ -173,6 +173,24 @@ impl FileService {
         authorize: Arc<dyn Fn() -> bool + Send + Sync>,
         complete: Arc<dyn Fn(crate::discard::DeleteOutcome) + Send + Sync>,
     ) -> Result<String, String> {
+        self.start_discard_delete_checked(
+            lease,
+            video,
+            operation_id,
+            Arc::new(|| true),
+            authorize,
+            complete,
+        )
+    }
+    pub(crate) fn start_discard_delete_checked(
+        &self,
+        lease: DeviceLease,
+        video: Video,
+        operation_id: String,
+        should_prepare: Arc<dyn Fn() -> bool + Send + Sync>,
+        authorize: Arc<dyn Fn() -> bool + Send + Sync>,
+        complete: Arc<dyn Fn(crate::discard::DeleteOutcome) + Send + Sync>,
+    ) -> Result<String, String> {
         takedock_files::validate_name(&video.name)?;
         let identity: Identity = serde_json::from_str(&video.identity).map_err(err)?;
         if !video.ready || identity.size != video.size {
@@ -203,6 +221,7 @@ impl FileService {
         };
         self.jobs.lock().unwrap().insert(id.clone(), cancel.clone());
         let job = crate::guarded_delete::DiscardJob {
+            should_prepare,
             event: event.clone(),
             lease,
             video,

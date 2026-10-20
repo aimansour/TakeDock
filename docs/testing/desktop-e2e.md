@@ -14,9 +14,15 @@ application. One serial spec owns the shared Windows profile and restart flow.
    confirmation is held; later capture intents cancel it. A stale observation
    cannot restore an inapplicable control. An independently confirmed Start
    becomes ready, retains focus and is shared by a newly opened window.
+   The native discard checkbox starts unchecked per window; Space changes the
+   same primary button to Stop and delete. Windows share finalization/completion.
+   Exact fixture deletion, missing baseline, cancellation by a newer Start and
+   a lost deletion acknowledgement are checked through the real Rust engine.
 3. Two-file selection, single-only rename, container duration, completed native
    progress and exact batch-copy SHA-256 outputs. Recording reaches ready while
    remote hash verification is held; the barrier is released in `finally`.
+   A discard waits behind that queue and a newer ordinary intent cancels it;
+   releasing the queue must preserve both fixture takes with zero delete calls.
 4. Arabic/RTL, destination, optional success sound, and readiness off/1250 across
    an actual restart, using explicit checkbox IDs.
 
@@ -46,6 +52,10 @@ The suite does not certify Android execution, NVDA speech, native folder
 selection, installer behavior or real-phone latency; those have separate
 packaged/device acceptance checks. The initial Windows 10 22H2 run passed all
 four flows with WebView2/EdgeDriver 154.0.4258.48 and Rust 1.98.1.
+Current-take discard requires separate [owned-device acceptance and preserved
+fixtures](current-take-discard.md); actual Android watch support remains pending
+until those cases run. The release tests use existing public bootstrap only for
+read-only baseline synchronization and add no production test control.
 
 GitHub-hosted Windows runners use a disposable ordinary account through the external
 `scripts/run-desktop-unprivileged.ps1`. The child asserts it is not an

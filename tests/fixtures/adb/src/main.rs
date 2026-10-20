@@ -40,6 +40,22 @@ fn main() {
     }
     let args = arguments.iter().map(String::as_str).collect::<Vec<_>>();
     match args.as_slice() {
+        [
+            "-nostdin",
+            "-v",
+            "error",
+            "-xerror",
+            "-i",
+            _,
+            "-f",
+            "null",
+            "-",
+        ] => {
+            fs::write(root.join("decode-started"), b"").unwrap();
+            if root.join("fail-decode").exists() {
+                std::process::exit(1);
+            }
+        }
         ["track-devices"] => {
             let mut previous = String::new();
             loop {
@@ -326,6 +342,17 @@ fn file_command(root: &Path, args: &[String]) -> Result<(), String> {
         }
         ["stat", name] => println!("{}", serde_json::to_string(&videos.stat(name)?).unwrap()),
         ["delete-guarded", name, expected, operation] => {
+            let mut trace = fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(root.join("delete-calls.jsonl"))
+                .unwrap();
+            writeln!(
+                trace,
+                "{}",
+                json!({"operation":operation,"name":name,"identity":expected})
+            )
+            .unwrap();
             fs::write(root.join("delete-prepared"), name).unwrap();
             while root.join("hold-delete-prepared").exists() {
                 thread::sleep(Duration::from_millis(10));

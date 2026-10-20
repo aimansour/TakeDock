@@ -75,6 +75,15 @@ fn successful_handshake_deletes_only_exact_identity() {
     let (_, results) = discard(&files, &fixture, Arc::new(AtomicBool::new(true)));
     assert!(matches!(outcome(&results), DeleteOutcome::Deleted));
     assert!(!fixture.video("take.mp4").exists());
+    let calls = std::fs::read_to_string(fixture.path().join("delete-calls.jsonl")).unwrap();
+    let calls = calls
+        .lines()
+        .map(|line| serde_json::from_str::<serde_json::Value>(line).unwrap())
+        .collect::<Vec<_>>();
+    assert_eq!(calls.len(), 1);
+    assert_eq!(calls[0]["operation"], "op-1");
+    assert_eq!(calls[0]["name"], "take.mp4");
+    assert!(calls[0]["identity"].as_str().is_some());
     assert_eq!(
         std::fs::read(fixture.video("other.mp4")).unwrap(),
         b"unrelated"

@@ -332,9 +332,18 @@ fn held_copy_does_not_delay_ordinary_capture_or_revive_cancelled_delete() {
     let path = app.current_file();
     app.request(take);
     wait(|| app.engine.snapshot().observed == RecordingState::Idle);
+    wait(|| app.engine.snapshot().discard.phase == DiscardPhase::Deleting);
     app.engine.dispatch(RecordingAction::Start).unwrap();
     wait(|| app.commands().len() == 3);
     app.fixture.unflag("hold-hash");
     wait(|| app.fixture.path().join("destination/old.mp4").exists());
+    wait(|| {
+        app.events.lock().unwrap().iter().any(|(event, value)| {
+            event == "file-job"
+                && value["discard_operation_id"].is_string()
+                && value["status"] == "cancelled"
+        })
+    });
+    assert!(!app.fixture.path().join("delete-calls.jsonl").exists());
     assert!(path.exists());
 }

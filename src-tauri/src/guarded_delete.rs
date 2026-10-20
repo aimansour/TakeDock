@@ -22,6 +22,7 @@ pub(crate) struct DiscardJob {
     pub video: Video,
     pub operation_id: String,
     pub cancel: Arc<AtomicBool>,
+    pub should_prepare: Arc<dyn Fn() -> bool + Send + Sync>,
     pub authorize: Arc<dyn Fn() -> bool + Send + Sync>,
     pub complete: Arc<dyn Fn(DeleteOutcome) + Send + Sync>,
 }
@@ -31,15 +32,17 @@ fn emit(sink: &EventSink, event: &JobEvent) {
 pub(crate) fn run(helper: &mut HelperClient, mut job: DiscardJob, sink: &EventSink) {
     job.event.status = "running".into();
     emit(sink, &job.event);
-    let outcome =
-        if job.cancel.load(Ordering::Acquire) || job.lease.cancelled.load(Ordering::Acquire) {
-            DeleteOutcome::Retained("discard_cancelled".into())
-        } else {
-            match helper.prepare(&job.lease) {
-                Ok(()) => perform(helper, &mut job, sink),
-                Err(_) => DeleteOutcome::Retained("discard_delete_failed".into()),
-            }
-        };
+    let outcome = if job.cancel.load(Ordering::Acquire)
+        || job.lease.cancelled.load(Ordering::Acquire)
+        || !(job.should_prepare)()
+    {
+        DeleteOutcome::Retained("discard_cancelled".into())
+    } else {
+        match helper.prepare(&job.lease) {
+            Ok(()) => perform(helper, &mut job, sink),
+            Err(_) => DeleteOutcome::Retained("discard_delete_failed".into()),
+        }
+    };
     let (status, code) = match &outcome {
         DeleteOutcome::Deleted => ("completed", "discard_completed"),
         DeleteOutcome::Retained(code) => ("cancelled", code.as_str()),

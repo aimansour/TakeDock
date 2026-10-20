@@ -473,6 +473,17 @@ impl DiscardMachine {
                 .compare_exchange(0, 1, Ordering::AcqRel, Ordering::Acquire)
                 .is_ok()
     }
+    pub(crate) fn delete_pending(&self, operation_id: &str) -> bool {
+        self.operation.as_ref().is_some_and(|operation| {
+            operation.receipt.operation_id == operation_id
+                && operation.phase == DiscardPhase::Deleting
+                && operation.authorization.load(Ordering::Acquire) == 0
+                && self
+                    .take
+                    .as_ref()
+                    .is_some_and(|take| take.valid && take.token == operation.receipt.take)
+        })
+    }
     pub fn finish_delete(&mut self, operation_id: &str, outcome: DeleteOutcome) {
         let Some(operation) = &mut self.operation else {
             return;
