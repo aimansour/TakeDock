@@ -39,7 +39,7 @@ try {
     Copy-Item -LiteralPath $installer.FullName,($installer.FullName+'.sig') -Destination $OutputDirectory
     Copy-Item -LiteralPath 'src-tauri/resources/observer.apk' -Destination (Join-Path $OutputDirectory 'TakeDock-Observer.apk')
     Copy-Item -LiteralPath 'test-results/desktop/acceptance.json' -Destination $OutputDirectory
-    $manifest=[ordered]@{version=$version;notes="TakeDock $version";pub_date=[DateTime]::UtcNow.ToString('yyyy-MM-ddTHH:mm:ssZ');platforms=@{'windows-x86_64'=@{url="https://github.com/aimansour/TakeDock/releases/download/v$version/$($installer.Name)";signature=(Get-Content -LiteralPath ($installer.FullName+'.sig') -Raw).Trim()}}}
+    $manifest=[ordered]@{version=$version;notes="TakeDock $version";pub_date=[DateTime]::UtcNow.ToString('yyyy-MM-ddTHH:mm:ssZ');platforms=@{'windows-x86_64'=@{url="https://github.com/wip-bunker-42/TakeDock/releases/download/v$version/$($installer.Name)";signature=(Get-Content -LiteralPath ($installer.FullName+'.sig') -Raw).Trim()}}}
     $manifest|ConvertTo-Json -Depth 8|Set-Content -LiteralPath (Join-Path $OutputDirectory 'latest.json')
     $evidence=[ordered]@{version=$version;commit=$acceptance.commit;signature_verified=$true;packaged_resources_match=$true;observer_certificate=(Get-Content observer/signing-certificate.sha256 -Raw).Trim()}
     $evidence|ConvertTo-Json|Set-Content -LiteralPath (Join-Path $OutputDirectory 'release-verification.json')
