@@ -2,6 +2,7 @@ pub mod adb;
 pub mod audio;
 #[cfg(feature = "desktop")]
 pub mod desktop;
+pub mod discard;
 pub mod events;
 pub mod files;
 pub mod model;
