@@ -111,8 +111,9 @@ fn acknowledged_delete_remains_completed_during_held_index_disconnect() {
         .filter(|(event, value)| {
             event == "discard-result" && value["operation_id"] == receipt.operation_id
         })
-        .map(|(_, value)| value)
+        .map(|(_, value)| value.clone())
         .collect::<Vec<_>>();
+    drop(events);
     assert_eq!(results.len(), 1);
     assert_eq!(results[0]["status"], "completed");
 }

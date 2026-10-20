@@ -57,7 +57,12 @@ pub(crate) fn run(helper: &mut HelperClient, mut job: DiscardJob, sink: &EventSi
         status: status.into(),
         message: code.into(),
     });
-    if matches!(outcome, DeleteOutcome::Deleted) {
+    let deleted = matches!(outcome, DeleteOutcome::Deleted);
+    // The acknowledged mutation owns its terminal result now. Best-effort
+    // media indexing must not leave it vulnerable to a generation change.
+    (job.complete)(outcome);
+    emit(sink, &job.event);
+    if deleted {
         let encoded = job
             .video
             .name
@@ -94,8 +99,6 @@ pub(crate) fn run(helper: &mut HelperClient, mut job: DiscardJob, sink: &EventSi
             );
         }
     }
-    (job.complete)(outcome);
-    emit(sink, &job.event);
 }
 fn uncertain(authorized: bool, code: &str) -> DeleteOutcome {
     if authorized {
