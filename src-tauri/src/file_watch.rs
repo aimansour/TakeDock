@@ -63,6 +63,9 @@ pub struct FileWatch {
     workers: Mutex<Vec<thread::JoinHandle<()>>>,
 }
 impl FileWatch {
+    pub fn is_stopped(&self) -> bool {
+        self.shared.stop.load(Ordering::Acquire)
+    }
     pub fn start(
         lease: DeviceLease,
         resources: PathBuf,

@@ -24,6 +24,7 @@ fn evidence() -> FileEvidence {
 }
 fn result(sequence: u64, action: RecordingAction, status: &str) -> VerificationResult {
     VerificationResult {
+        discard_operation_id: None,
         generation: 7,
         sequence,
         action,
@@ -305,4 +306,15 @@ fn success_without_delete_authorization_cannot_complete_an_operation() {
     machine.finish_delete(&operation, DeleteOutcome::Deleted);
     assert_eq!(machine.snapshot().phase, DiscardPhase::Deleting);
     assert!(machine.drain_results().is_empty());
+}
+
+#[test]
+fn stop_verification_deadline_begins_after_the_delayed_stop() {
+    let (mut machine, take) = managed_take();
+    machine.request(&take, 101, 1000).unwrap();
+    machine.poll(700);
+    assert!(machine.poll(1101).is_empty());
+    assert_eq!(machine.snapshot().phase, DiscardPhase::ConfirmingStop);
+    machine.poll(1700);
+    assert_eq!(machine.snapshot().phase, DiscardPhase::Retained);
 }

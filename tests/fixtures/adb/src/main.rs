@@ -73,6 +73,7 @@ fn main() {
                     .unwrap();
                 writeln!(trace, "{}", json!({"key":key,"command":line,"time":SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis()})).unwrap();
                 let mut state = read_state(&root);
+                let previous_state = state["state"].as_str().unwrap_or("idle").to_owned();
                 state["state"] = json!(match (key, state["state"].as_str().unwrap_or("idle")) {
                     ("up", "idle") => "recording",
                     ("up", _) => "idle",
@@ -80,7 +81,52 @@ fn main() {
                     ("down", "paused") => "recording",
                     _ => "idle",
                 });
-                fs::write(root.join("state.json"), state.to_string()).unwrap();
+                if key == "up"
+                    && previous_state != "idle"
+                    && root.join("ignore-early-stop").exists()
+                {
+                    let start: u128 = fs::read_to_string(root.join("take-start-ms"))
+                        .ok()
+                        .and_then(|value| value.parse().ok())
+                        .unwrap_or(0);
+                    if SystemTime::now()
+                        .duration_since(UNIX_EPOCH)
+                        .unwrap()
+                        .as_millis()
+                        .saturating_sub(start)
+                        < 500
+                    {
+                        state["state"] = json!(previous_state);
+                    }
+                }
+                if root.join("record-take-files").exists()
+                    && key == "up"
+                    && previous_state == "idle"
+                    && state["state"] == "recording"
+                {
+                    let counter: u64 = fs::read_to_string(root.join("take-counter"))
+                        .ok()
+                        .and_then(|value| value.parse().ok())
+                        .unwrap_or(0)
+                        + 1;
+                    let name = format!("take-{counter:04}.mp4");
+                    fs::write(root.join("take-counter"), counter.to_string()).unwrap();
+                    fs::write(root.join("current-take-name"), &name).unwrap();
+                    fs::write(
+                        root.join("take-start-ms"),
+                        SystemTime::now()
+                            .duration_since(UNIX_EPOCH)
+                            .unwrap()
+                            .as_millis()
+                            .to_string(),
+                    )
+                    .unwrap();
+                    fs::write(root.join("videos").join(name), b"fixture-recording").unwrap();
+                    fs::write(root.join("take-created"), b"").unwrap();
+                }
+                fs::write(root.join("state.tmp"), state.to_string()).unwrap();
+                fs::rename(root.join("state.tmp"), root.join("state.json")).unwrap();
+                finish_fixture_take(&root);
                 let marker = line
                     .split("echo ")
                     .nth(1)
@@ -111,6 +157,7 @@ fn main() {
             let mut previous = Value::Null;
             let mut sequence = 0u64;
             loop {
+                finish_fixture_take(&root);
                 if root.join(format!("stop-{session}")).exists() || root.join("force-stop").exists()
                 {
                     fs::write(root.join("observer-stopped"), b"").unwrap();
@@ -349,6 +396,41 @@ fn file_command(root: &Path, args: &[String]) -> Result<(), String> {
     }
     Ok(())
 }
+fn finish_fixture_take(root: &Path) {
+    if !root.join("record-take-files").exists()
+        || root.join("hold-finalization").exists()
+        || read_state(root)["state"] != "idle"
+    {
+        return;
+    }
+    let Ok(name) = fs::read_to_string(root.join("current-take-name")) else {
+        return;
+    };
+    let path = root.join("videos").join(name);
+    if fs::read(&path).ok().as_deref() != Some(b"fixture-recording") {
+        return;
+    }
+    fn atom(kind: &[u8; 4], data: &[u8]) -> Vec<u8> {
+        let mut bytes = ((data.len() + 8) as u32).to_be_bytes().to_vec();
+        bytes.extend(kind);
+        bytes.extend(data);
+        bytes
+    }
+    let mut timeline = [0; 20];
+    timeline[12..16].copy_from_slice(&1000u32.to_be_bytes());
+    timeline[16..20].copy_from_slice(&100u32.to_be_bytes());
+    fs::write(
+        path,
+        [
+            atom(b"ftyp", b"isom0000"),
+            atom(b"mdat", b"capture"),
+            atom(b"moov", &atom(b"mvhd", &timeline)),
+        ]
+        .concat(),
+    )
+    .unwrap();
+}
+
 struct GuardOutput<'a> {
     root: &'a Path,
     bytes: Vec<u8>,

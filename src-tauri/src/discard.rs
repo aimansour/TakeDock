@@ -43,7 +43,7 @@ impl DiscardPhase {
         )
     }
 }
-#[derive(Debug, Default, Clone, Serialize, Deserialize)]
+#[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DiscardSnapshot {
     pub take: Option<TakeToken>,
     pub eligible: bool,
@@ -99,6 +99,7 @@ struct Operation {
     phase: DiscardPhase,
     code: String,
     deadline: u64,
+    verification_ms: u64,
     stop_sequence: Option<u64>,
     inspection_pending: bool,
     next_inspect: u64,
@@ -116,6 +117,20 @@ pub struct DiscardMachine {
     results: Vec<DiscardResult>,
 }
 impl DiscardMachine {
+    pub(crate) fn observe_state(&mut self, eligible: bool, state: crate::model::RecordingState) {
+        let confirmed = self
+            .take
+            .as_ref()
+            .is_some_and(|take| take.confirmed_ms.is_some());
+        if !eligible
+            || (confirmed && state == crate::model::RecordingState::Unknown)
+            || (confirmed
+                && state == crate::model::RecordingState::Idle
+                && self.operation.is_none())
+        {
+            self.cancel("discard_observation_lost");
+        }
+    }
     pub fn new(generation: u64) -> Self {
         Self {
             generation,
@@ -267,6 +282,7 @@ impl DiscardMachine {
             phase: DiscardPhase::WaitingToStop,
             code: String::new(),
             deadline: now_ms.saturating_add(verification_ms),
+            verification_ms,
             stop_sequence: None,
             inspection_pending: false,
             next_inspect: now_ms,
@@ -396,6 +412,7 @@ impl DiscardMachine {
                     .is_some_and(|confirmed| now_ms >= confirmed.saturating_add(600))
                 {
                     operation.phase = DiscardPhase::ConfirmingStop;
+                    operation.deadline = now_ms.saturating_add(operation.verification_ms);
                     vec![DiscardEffect::SendStop { operation_id: id }]
                 } else {
                     Vec::new()

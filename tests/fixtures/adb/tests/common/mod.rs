@@ -6,6 +6,7 @@ use std::{
 };
 use takedock_lib::{adb::Adb, session::DeviceLease};
 
+#[track_caller]
 pub fn wait(mut predicate: impl FnMut() -> bool) {
     let start = Instant::now();
     while !predicate() {

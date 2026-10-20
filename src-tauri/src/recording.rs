@@ -1,6 +1,11 @@
+use crate::discard::{DiscardMachine, DiscardPhase, FileEvidence, TakeToken};
 use crate::model::*;
 use crate::readiness::{Readiness, ReadinessPolicy, ReadyToken};
 use std::collections::VecDeque;
+use std::sync::{
+    Arc,
+    atomic::{AtomicU8, Ordering},
+};
 
 pub fn transition(
     state: RecordingState,
@@ -17,6 +22,8 @@ pub fn transition(
 }
 #[derive(Clone)]
 struct Pending {
+    discard_operation_id: Option<String>,
+    write_ticket: Option<Arc<AtomicU8>>,
     sequence: u64,
     action: RecordingAction,
     suppress_success_sound: bool,
@@ -26,6 +33,8 @@ struct Pending {
 }
 #[derive(Clone)]
 pub struct RecordingMachine {
+    pub(crate) discard: DiscardMachine,
+    pub(crate) file_evidence: Option<FileEvidence>,
     pub state: SessionState,
     session: String,
     observation_sequence: u64,
@@ -36,13 +45,84 @@ pub struct RecordingMachine {
     pub(crate) readiness_policy: ReadinessPolicy,
 }
 impl RecordingMachine {
+    pub(crate) fn prepare_intent(&mut self, action: RecordingAction) {
+        let operations: Vec<_> = self
+            .pending
+            .iter()
+            .filter_map(|pending| pending.discard_operation_id.clone())
+            .collect();
+        for operation in operations {
+            self.withdraw_discard_stop(&operation);
+        }
+        self.discard.ordinary_intent(action);
+        self.invalidate_speech_readiness();
+    }
+    pub(crate) fn withdraw_discard_stop(&mut self, operation_id: &str) -> Option<u64> {
+        let index = self.pending.iter().position(|pending| {
+            pending.discard_operation_id.as_deref() == Some(operation_id)
+                && pending.write_ticket.as_ref().is_some_and(|ticket| {
+                    ticket
+                        .compare_exchange(0, 2, Ordering::AcqRel, Ordering::Acquire)
+                        .is_ok()
+                })
+        })?;
+        let sequence = self.pending.remove(index)?.sequence;
+        self.state.pending = self.pending.len();
+        self.state.predicted = self
+            .pending
+            .back()
+            .map(|pending| pending.expected)
+            .unwrap_or(self.state.observed);
+        Some(sequence)
+    }
+    pub(crate) fn discard_write_ticket(&self, sequence: u64) -> Option<Arc<AtomicU8>> {
+        self.pending
+            .iter()
+            .find(|pending| pending.sequence == sequence)
+            .and_then(|pending| pending.write_ticket.clone())
+    }
+    pub(crate) fn commit_discard_write(&mut self, sequence: u64, ticket: &Arc<AtomicU8>) -> bool {
+        let current = self.discard.snapshot();
+        self.pending.iter().any(|pending| {
+            pending.sequence == sequence && pending.discard_operation_id == current.operation_id
+        }) && current.phase == DiscardPhase::ConfirmingStop
+            && ticket
+                .compare_exchange(0, 1, Ordering::AcqRel, Ordering::Acquire)
+                .is_ok()
+    }
+    pub(crate) fn withdraw_cancelled_discard(&mut self) {
+        let snapshot = self.discard.snapshot();
+        if matches!(
+            snapshot.phase,
+            DiscardPhase::Retained | DiscardPhase::Unavailable
+        ) && let Some(operation) = snapshot.operation_id
+        {
+            self.withdraw_discard_stop(&operation);
+        }
+    }
+    pub(crate) fn cancel_discard(&mut self, code: &str) {
+        self.discard.cancel(code);
+        self.withdraw_cancelled_discard();
+    }
     pub fn snapshot_for_event(&mut self) -> SessionState {
+        self.state.discard = self.discard.snapshot();
+        if self.state.discard.take.is_none()
+            && self.state.observed == RecordingState::Idle
+            && self
+                .file_evidence
+                .as_ref()
+                .is_some_and(|evidence| evidence.complete)
+        {
+            self.state.discard.reason = "discard_ready_for_start".into();
+        }
         self.state.revision += 1;
         self.state.clone()
     }
     pub fn new(session: String, generation: u64) -> Self {
         let defaults = Settings::default();
         Self {
+            discard: DiscardMachine::new(generation),
+            file_evidence: None,
             state: SessionState {
                 generation,
                 connected: true,
@@ -105,6 +185,7 @@ impl RecordingMachine {
                     "superseded"
                 };
                 results.push(VerificationResult {
+                    discard_operation_id: pending.discard_operation_id,
                     generation: self.state.generation,
                     sequence: pending.sequence,
                     action: pending.action,
@@ -119,11 +200,20 @@ impl RecordingMachine {
             self.state.predicted = observation.state;
         }
         for result in &results {
+            self.discard.verification(result, now_ms);
             if result.action == RecordingAction::Start && result.status == "confirmed" {
                 self.readiness.confirm(result.sequence, now_ms);
             }
         }
         self.reconcile_readiness();
+        self.discard.observe_state(
+            self.state.connected
+                && self.state.observer_ready
+                && self.state.foreground
+                && self.state.video_mode,
+            self.state.observed,
+        );
+        self.withdraw_cancelled_discard();
         results
     }
     pub fn dispatch(
@@ -131,6 +221,16 @@ impl RecordingMachine {
         action: RecordingAction,
         now: u64,
         timeout: u64,
+    ) -> Result<CommandReceipt, String> {
+        self.prepare_intent(action);
+        self.dispatch_raw(action, now, timeout, None)
+    }
+    pub(crate) fn dispatch_raw(
+        &mut self,
+        action: RecordingAction,
+        now: u64,
+        timeout: u64,
+        discard_operation_id: Option<&str>,
     ) -> Result<CommandReceipt, String> {
         if !self.state.connected
             || !self.state.observer_ready
@@ -140,9 +240,23 @@ impl RecordingMachine {
             return Err("camera_not_eligible".into());
         }
         self.invalidate_speech_readiness();
+        if let Some(operation) = discard_operation_id {
+            let snapshot = self.discard.snapshot();
+            if action != RecordingAction::Stop
+                || snapshot.operation_id.as_deref() != Some(operation)
+                || snapshot.phase != DiscardPhase::ConfirmingStop
+            {
+                return Err("discard_cancelled".into());
+            }
+        }
+        let confirmed_idle = self.state.observed == RecordingState::Idle
+            && self.state.predicted == RecordingState::Idle
+            && self.pending.is_empty();
         let expected = transition(self.state.predicted, action)?;
         self.state.command_sequence += 1;
         self.pending.push_back(Pending {
+            discard_operation_id: discard_operation_id.map(str::to_owned),
+            write_ticket: discard_operation_id.map(|_| Arc::new(AtomicU8::new(0))),
             sequence: self.state.command_sequence,
             action,
             suppress_success_sound: action == RecordingAction::Start && self.readiness_policy.sound,
@@ -153,6 +267,16 @@ impl RecordingMachine {
         self.state.predicted = expected;
         self.state.pending = self.pending.len();
         if action == RecordingAction::Start {
+            self.discard.start_queued(
+                TakeToken {
+                    generation: self.state.generation,
+                    start_sequence: self.state.command_sequence,
+                    id: uuid::Uuid::new_v4().to_string(),
+                },
+                self.file_evidence.clone(),
+                confirmed_idle,
+                now,
+            );
             self.readiness.begin(
                 ReadyToken {
                     generation: self.state.generation,
@@ -179,6 +303,7 @@ impl RecordingMachine {
             let pending = self.pending.pop_front().unwrap();
             let latest = self.pending.is_empty();
             results.push(VerificationResult {
+                discard_operation_id: pending.discard_operation_id,
                 generation: self.state.generation,
                 sequence: pending.sequence,
                 action: pending.action,
@@ -196,10 +321,15 @@ impl RecordingMachine {
             }
         }
         self.state.pending = self.pending.len();
+        for result in &results {
+            self.discard.verification(result, now);
+        }
+        self.withdraw_cancelled_discard();
         self.reconcile_readiness();
         results
     }
     pub fn delivery_failed(&mut self, sequence: u64) -> Vec<VerificationResult> {
+        self.cancel_discard("command_delivery_failed");
         if sequence == self.state.command_sequence {
             self.invalidate_speech_readiness();
         }
@@ -217,6 +347,7 @@ impl RecordingMachine {
         self.state.predicted = RecordingState::Unknown;
         self.state.condition = "command_delivery_failed".into();
         vec![VerificationResult {
+            discard_operation_id: pending.discard_operation_id,
             generation: self.state.generation,
             sequence,
             action: pending.action,
@@ -226,6 +357,7 @@ impl RecordingMachine {
         }]
     }
     pub fn channel_failed(&mut self) {
+        self.cancel_discard("command_shell_closed");
         self.invalidate_speech_readiness();
         self.capture_available = false;
         self.pending.clear();
@@ -265,6 +397,68 @@ impl RecordingMachine {
 mod tests {
     use super::*;
     use crate::readiness::ReadinessPolicy;
+    fn queued_discard() -> (
+        RecordingMachine,
+        u64,
+        std::sync::Arc<std::sync::atomic::AtomicU8>,
+    ) {
+        use crate::discard::FileEvidence;
+        let mut model = machine();
+        model.file_evidence = Some(FileEvidence {
+            stream: "watch".into(),
+            sequence: 3,
+            complete: true,
+            received_ms: 0,
+            entries: std::sync::Arc::new(std::collections::BTreeMap::new()),
+        });
+        model.dispatch(RecordingAction::Start, 1, 1000).unwrap();
+        model.observe(observation(2, RecordingState::Recording), 100);
+        let take = model.discard.snapshot().take.unwrap();
+        let receipt = model.discard.request(&take, 101, 1000).unwrap();
+        model.discard.poll(700);
+        let stop = model
+            .dispatch_raw(
+                RecordingAction::Stop,
+                700,
+                1000,
+                Some(&receipt.operation_id),
+            )
+            .unwrap();
+        model
+            .discard
+            .stop_queued(&receipt.operation_id, stop.sequence);
+        let ticket = model.discard_write_ticket(stop.sequence).unwrap();
+        (model, stop.sequence, ticket)
+    }
+    #[test]
+    fn new_start_after_withdrawn_stop_is_revalidated_without_a_wrong_toggle() {
+        let (mut model, sequence, ticket) = queued_discard();
+        model.prepare_intent(RecordingAction::Start);
+        assert_eq!(model.state.predicted, RecordingState::Recording);
+        assert!(!model.commit_discard_write(sequence, &ticket));
+        assert!(
+            model
+                .dispatch_raw(RecordingAction::Start, 701, 1000, None)
+                .is_err()
+        );
+        assert_eq!(model.state.pending, 0);
+    }
+    #[test]
+    fn queue_failure_cannot_restore_cancelled_discard_write() {
+        let (mut model, sequence, ticket) = queued_discard();
+        model.prepare_intent(RecordingAction::Pause);
+        let rollback = model.clone();
+        model
+            .dispatch_raw(RecordingAction::Pause, 701, 1000, None)
+            .unwrap();
+        model = rollback;
+        assert!(!model.commit_discard_write(sequence, &ticket));
+        assert_eq!(model.state.predicted, RecordingState::Recording);
+        assert_eq!(
+            model.discard.snapshot().phase,
+            crate::discard::DiscardPhase::Retained
+        );
+    }
     #[test]
     fn confirmed_start_arms_readiness_but_resume_does_not() {
         let mut machine = machine();

@@ -4,7 +4,13 @@ use crate::{
     readiness::{ReadinessPolicy, ReadyToken},
     recording::RecordingMachine,
 };
+use crate::{
+    discard::{DiscardEffect, DiscardReceipt, TakeToken},
+    file_watch::FileWatch,
+    files::FileService,
+};
 use sha2::{Digest, Sha256};
+mod discard_runtime;
 use std::{
     io::{BufRead, BufReader, Write},
     path::PathBuf,
@@ -36,6 +42,7 @@ impl DeviceLease {
     }
 }
 struct QueuedCommand {
+    ticket: Option<Arc<std::sync::atomic::AtomicU8>>,
     sequence: u64,
     action: RecordingAction,
 }
@@ -46,6 +53,9 @@ struct Active {
     processes: Vec<ProcessHandle>,
 }
 struct Shared {
+    services: Option<DiscardServices>,
+    watcher: Mutex<Option<(u64, Arc<FileWatch>)>>,
+    effects: SyncSender<(u64, DiscardEffect)>,
     adb: Adb,
     apk: PathBuf,
     settings: Settings,
@@ -61,6 +71,11 @@ pub struct Engine {
     shared: Arc<Shared>,
     workers: Mutex<Vec<thread::JoinHandle<()>>>,
 }
+#[derive(Clone)]
+struct DiscardServices {
+    resources: PathBuf,
+    files: Arc<FileService>,
+}
 
 impl Shared {
     fn current(&self, generation: u64) -> bool {
@@ -73,7 +88,13 @@ impl Shared {
     fn state(&self) {
         // Stamp under the model lock; serialization/emission remain outside it.
         // Receivers can discard an older snapshot delivered by another thread.
-        let state = self.model.lock().unwrap().snapshot_for_event();
+        let (state, results) = {
+            let mut model = self.model.lock().unwrap();
+            (model.snapshot_for_event(), model.discard.drain_results())
+        };
+        for result in results {
+            (self.sink)("discard-result", serde_json::to_value(result).unwrap());
+        }
         (self.sink)("session-state", serde_json::to_value(state).unwrap());
     }
     fn results(&self, results: Vec<VerificationResult>) {
@@ -96,6 +117,7 @@ impl Shared {
             // A live read/protocol error invalidates the evidence behind a cue.
             // Keep capture prediction and the authorized file lease unchanged.
             model.invalidate_speech_readiness();
+            model.cancel_discard("discard_observation_lost");
             model.snapshot_for_event()
         };
         (self.sink)("session-state", serde_json::to_value(state).unwrap());
@@ -124,14 +146,29 @@ impl Shared {
     fn disconnect(&self, condition: &str) {
         let generation = NEXT_GENERATION.fetch_add(1, Ordering::AcqRel);
         let active = self.active.lock().unwrap().take();
-        {
+        let discarded = {
             let mut model = self.model.lock().unwrap();
+            model.cancel_discard("discard_disconnected");
+            let snapshot = model.discard.snapshot();
+            if snapshot.phase == crate::discard::DiscardPhase::Deleting
+                && let Some(operation) = snapshot.operation_id
+            {
+                model.discard.finish_delete(
+                    &operation,
+                    crate::discard::DeleteOutcome::Unknown("discard_outcome_unknown".into()),
+                );
+            }
+            let results = model.discard.drain_results();
             let policy = model.readiness_policy;
             self.generation.store(generation, Ordering::Release);
             *model = RecordingMachine::new(String::new(), generation);
             model.set_readiness_policy(policy);
             model.state.connected = false;
             model.state.condition = condition.into();
+            results
+        };
+        for result in discarded {
+            (self.sink)("discard-result", serde_json::to_value(result).unwrap());
         }
         self.state();
         if let Some(active) = active {
@@ -267,6 +304,16 @@ impl Shared {
                 if !shared.current(generation) {
                     break;
                 }
+                if let Some(ticket) = &command.ticket {
+                    let allowed = shared
+                        .model
+                        .lock()
+                        .unwrap()
+                        .commit_discard_write(command.sequence, ticket);
+                    if !allowed {
+                        continue;
+                    }
+                }
                 let line = adb::capture_command(command.sequence, command.action);
                 if input
                     .write_all(line.as_bytes())
@@ -357,6 +404,7 @@ impl Shared {
                 model.state.predicted = RecordingState::Unknown;
                 model.state.condition = "observer_closed".into();
                 model.invalidate_speech_readiness();
+                model.cancel_discard("discard_observation_lost");
                 drop(model);
                 shared.error("observer_closed", "");
                 shared.state();
@@ -377,6 +425,28 @@ impl Shared {
 
 impl Engine {
     pub fn start(settings: Settings, apk: PathBuf, sink: EventSink) -> Result<Self, String> {
+        Self::start_inner(settings, apk, sink, None)
+    }
+    pub fn start_with_files(
+        settings: Settings,
+        apk: PathBuf,
+        resources: PathBuf,
+        files: Arc<FileService>,
+        sink: EventSink,
+    ) -> Result<Self, String> {
+        Self::start_inner(
+            settings,
+            apk,
+            sink,
+            Some(DiscardServices { resources, files }),
+        )
+    }
+    fn start_inner(
+        settings: Settings,
+        apk: PathBuf,
+        sink: EventSink,
+        services: Option<DiscardServices>,
+    ) -> Result<Self, String> {
         let adb = Adb::resolve(&settings.adb_path)?;
         if !apk.is_file() {
             return Err("observer_resource_missing".into());
@@ -389,7 +459,11 @@ impl Engine {
         });
         model.state.connected = false;
         model.state.condition = "searching".into();
+        let (effects, effect_receiver) = mpsc::sync_channel(32);
         let shared = Arc::new(Shared {
+            services,
+            watcher: Mutex::new(None),
+            effects,
             adb,
             apk,
             settings,
@@ -420,6 +494,7 @@ impl Engine {
                 if let Some(token) = cue {
                     (timer.sink)("speech-ready", serde_json::to_value(token).unwrap());
                 }
+                timer.poll_discard();
                 thread::sleep(Duration::from_millis(25));
             }
         });
@@ -493,9 +568,18 @@ impl Engine {
                 }
             }
         });
+        let mut workers = vec![timer_worker, tracking_worker];
+        if shared.services.is_some() {
+            let effects = shared.clone();
+            workers.push(thread::spawn(move || {
+                effects.run_discard_effects(effect_receiver)
+            }));
+            let watchers = shared.clone();
+            workers.push(thread::spawn(move || watchers.run_watch_manager()));
+        }
         Ok(Self {
             shared,
-            workers: Mutex::new(vec![timer_worker, tracking_worker]),
+            workers: Mutex::new(workers),
         })
     }
     pub fn snapshot(&self) -> SessionState {
@@ -525,48 +609,14 @@ impl Engine {
         action: RecordingAction,
         generation: u64,
     ) -> Result<CommandReceipt, String> {
-        let active_guard = self.shared.active.lock().unwrap();
-        let active = active_guard.as_ref().ok_or("no_device")?;
-        if active.lease.generation != generation || !self.shared.current(generation) {
-            return Err("session_replaced".into());
-        }
-        let mut model = self.shared.model.lock().unwrap();
-        let previous = model.clone();
-        let receipt = match model.dispatch(
-            action,
-            self.shared.now(),
-            self.shared.settings.verification_ms,
-        ) {
-            Ok(receipt) => receipt,
-            Err(error) => {
-                let state = model.snapshot_for_event();
-                drop(model);
-                drop(active_guard);
-                (self.shared.sink)("session-state", serde_json::to_value(state).unwrap());
-                return Err(error);
-            }
-        };
-        if active
-            .sender
-            .try_send(QueuedCommand {
-                sequence: receipt.sequence,
-                action,
-            })
-            .is_err()
-        {
-            *model = previous;
-            model.invalidate_speech_readiness();
-            let state = model.snapshot_for_event();
-            drop(model);
-            drop(active_guard);
-            (self.shared.sink)("session-state", serde_json::to_value(state).unwrap());
-            return Err("command_queue_unavailable".into());
-        }
-        let state = model.snapshot_for_event();
-        drop(model);
-        drop(active_guard);
-        (self.shared.sink)("session-state", serde_json::to_value(state).unwrap());
-        Ok(receipt)
+        self.shared.dispatch_capture(action, generation, None)
+    }
+    pub fn request_discard(
+        &self,
+        take: TakeToken,
+        generation: u64,
+    ) -> Result<DiscardReceipt, String> {
+        self.shared.request_discard(take, generation)
     }
     pub fn set_readiness_policy(&self, policy: ReadinessPolicy) {
         self.shared
@@ -635,6 +685,7 @@ mod tests {
         let (sender, _receiver) = mpsc::sync_channel(1);
         sender
             .try_send(QueuedCommand {
+                ticket: None,
                 sequence: 0,
                 action: RecordingAction::Start,
             })
@@ -646,6 +697,9 @@ mod tests {
         };
         let engine = Engine {
             shared: Arc::new(Shared {
+                services: None,
+                watcher: Mutex::new(None),
+                effects: mpsc::sync_channel(1).0,
                 adb: adb.clone(),
                 apk: PathBuf::new(),
                 settings: Settings::default(),
