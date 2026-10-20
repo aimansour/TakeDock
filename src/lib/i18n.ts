@@ -39,7 +39,61 @@ const en = {
   videos: 'Videos',
   settings: 'Settings',
   start: 'Start video',
-  stop: 'Stop video',
+  stop: 'Stop',
+  deleteTake: 'Delete this take',
+  stopAndDelete: 'Stop and delete',
+  discardShortcutHelp:
+    'Deletion requires the Stop and delete button; Ctrl+Shift+R only starts or stops recording.',
+  discardAssumptionHelp:
+    'Automatic deletion requires Open Camera to save here with no other app adding videos during the take.',
+  discard_waiting_to_stop: 'Waiting for the take to be ready to stop…',
+  discard_confirming_stop: 'Confirming that recording has stopped…',
+  discard_finalizing: 'Waiting for the video to finish saving…',
+  discard_deleting: 'Deleting this take…',
+  discard_completed: 'The take was deleted.',
+  discard_retained: 'Automatic deletion was not completed.',
+  discard_outcome_unknown:
+    'Deletion was authorized, but its result could not be confirmed. Check Videos before taking further action.',
+  discard_no_managed_take:
+    'Automatic deletion is available only for a take started through TakeDock.',
+  discard_ready_for_start:
+    'Start a take through TakeDock to make per-take deletion available.',
+  discard_not_confirmed_idle:
+    'The take did not start from a confirmed idle camera. Stop normally, then select the video in Videos.',
+  discard_baseline_unavailable:
+    'The file list was not ready before this take started. Stop normally, then select the video in Videos.',
+  discard_file_history_lost:
+    'The take could not be associated with one unchanged video. Check Videos and select the file explicitly.',
+  discard_take_replaced:
+    'This request belongs to a previous take. Check the current recording state.',
+  discard_capture_changed:
+    'Another recording action cancelled the pending deletion.',
+  discard_observation_lost:
+    'The camera state could not be confirmed. No pending deletion will continue.',
+  discard_start_unconfirmed:
+    'Recording start was not confirmed. The take will not be deleted automatically.',
+  discard_stop_unconfirmed:
+    'Recording stop was not confirmed. Check the phone; automatic deletion has been cancelled.',
+  discard_source_changed:
+    'The video changed while deletion was being prepared. Check Videos.',
+  discard_inspection_failed:
+    'The video could not be checked for safe deletion. Check Videos.',
+  discard_finalization_timeout:
+    'The video did not finish saving in time. Check Videos before deleting it.',
+  discard_cancelled: 'Pending deletion was cancelled.',
+  discard_disconnected:
+    'The connection changed. No pending deletion will continue.',
+  discard_worker_unavailable: 'Deletion could not be queued. Check Videos.',
+  discard_capture_pending:
+    'A recording action is still being confirmed. Check the recording state before trying again.',
+  discard_busy: 'A previous deletion is still finishing.',
+  discard_delete_failed: 'The take could not be deleted. Check Videos.',
+  discard_permit_timeout:
+    'Deletion was not authorized in time. The video was not deleted.',
+  discard_permit_failed:
+    'Deletion authorization failed. The video was not deleted.',
+  discard_invalid_operation:
+    'The deletion request is invalid. The video was not deleted.',
   pause: 'Pause video',
   resume: 'Resume video',
   idle: 'Ready',
@@ -180,7 +234,58 @@ const ar: Record<keyof typeof en, string> = {
   videos: 'الفيديوهات',
   settings: 'الإعدادات',
   start: 'بدء فيديو',
-  stop: 'إنهاء الفيديو',
+  stop: 'إيقاف',
+  deleteTake: 'حذف هذه المحاولة',
+  stopAndDelete: 'إيقاف وحذف',
+  discardShortcutHelp:
+    'الحذف يتطلب تفعيل زر إيقاف وحذف؛ الاختصار Ctrl+Shift+R يبدأ التسجيل أو يوقفه فقط.',
+  discardAssumptionHelp:
+    'الحذف التلقائي يتطلب أن يحفظ Open Camera في هذا المجلد وألّا يضيف تطبيق آخر فيديوهات أثناء المحاولة.',
+  discard_waiting_to_stop: 'جارٍ انتظار جاهزية المحاولة للإيقاف…',
+  discard_confirming_stop: 'جارٍ التأكد من توقف التسجيل…',
+  discard_finalizing: 'جارٍ انتظار اكتمال حفظ الفيديو…',
+  discard_deleting: 'جارٍ حذف هذه المحاولة…',
+  discard_completed: 'حُذفت المحاولة.',
+  discard_retained: 'لم يكتمل الحذف التلقائي.',
+  discard_outcome_unknown:
+    'صدر إذن الحذف، لكن تعذر تأكيد النتيجة. راجع الفيديوهات قبل اتخاذ إجراء آخر.',
+  discard_no_managed_take:
+    'الحذف التلقائي متاح فقط لمحاولة بدأ تسجيلها من TakeDock.',
+  discard_ready_for_start:
+    'ابدأ المحاولة من TakeDock لإتاحة حذفها من شاشة التسجيل.',
+  discard_not_confirmed_idle:
+    'لم تبدأ المحاولة من حالة كاميرا متوقفة مؤكدة. أوقف التسجيل بالطريقة العادية ثم حدد الفيديو من قائمة الفيديوهات.',
+  discard_baseline_unavailable:
+    'لم تجهز قائمة الملفات قبل بدء هذه المحاولة. أوقف التسجيل بالطريقة العادية ثم حدد الفيديو من قائمة الفيديوهات.',
+  discard_file_history_lost:
+    'تعذر ربط المحاولة بفيديو واحد لم يُستبدل. راجع الفيديوهات وحدد الملف بنفسك.',
+  discard_take_replaced:
+    'هذا الطلب يخص محاولة سابقة. راجع حالة التسجيل الحالية.',
+  discard_capture_changed: 'ألغى إجراء تسجيل آخر الحذف المعلّق.',
+  discard_observation_lost:
+    'تعذر التأكد من حالة الكاميرا. لن يستمر الحذف المعلّق.',
+  discard_start_unconfirmed:
+    'لم يتأكد بدء التسجيل. لن تُحذف المحاولة تلقائيًا.',
+  discard_stop_unconfirmed:
+    'لم يتأكد توقف التسجيل. راجع الهاتف؛ أُلغي الحذف التلقائي.',
+  discard_source_changed:
+    'تغيّر الفيديو أثناء تجهيز الحذف. راجع قائمة الفيديوهات.',
+  discard_inspection_failed:
+    'تعذر فحص الفيديو للتأكد من إمكانية حذفه. راجع قائمة الفيديوهات.',
+  discard_finalization_timeout:
+    'لم يكتمل حفظ الفيديو في الوقت المحدد. راجع قائمة الفيديوهات قبل حذفه.',
+  discard_cancelled: 'أُلغي الحذف المعلّق.',
+  discard_disconnected: 'تغيّر الاتصال. لن يستمر الحذف المعلّق.',
+  discard_worker_unavailable:
+    'تعذر إدراج الحذف في الطابور. راجع قائمة الفيديوهات.',
+  discard_capture_pending:
+    'ما زال إجراء تسجيل في انتظار التأكيد. راجع حالة التسجيل قبل المحاولة مجددًا.',
+  discard_busy: 'ما زالت عملية حذف سابقة قيد الإنهاء.',
+  discard_delete_failed: 'تعذر حذف المحاولة. راجع قائمة الفيديوهات.',
+  discard_permit_timeout:
+    'لم يصدر إذن الحذف في الوقت المحدد. لم يُحذف الفيديو.',
+  discard_permit_failed: 'تعذر الحصول على إذن الحذف. لم يُحذف الفيديو.',
+  discard_invalid_operation: 'طلب الحذف غير صالح. لم يُحذف الفيديو.',
   pause: 'إيقاف مؤقت',
   resume: 'استئناف الفيديو',
   idle: 'جاهز',

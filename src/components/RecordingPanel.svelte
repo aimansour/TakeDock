@@ -5,15 +5,20 @@
   let {
     state: session,
     onAction,
+    onDiscard,
     language = 'en',
   }: {
     state: SessionState;
     onAction: (action: RecordingAction) => void;
+    onDiscard: () => void;
     language?: 'en' | 'ar';
   } = $props();
   let primary = $state<HTMLButtonElement>();
   let secondary = $state<HTMLButtonElement>();
   let heading = $state<HTMLHeadingElement>();
+  let discardCheckbox = $state<HTMLInputElement>();
+  let deleteTake = $state(false);
+  let confirmedTake = $state('');
   let eligible = $derived(
     session.connected &&
       session.observer_ready &&
@@ -24,10 +29,31 @@
   let recording = $derived(
     session.predicted === 'recording' || session.predicted === 'paused',
   );
+  let canDiscard = $derived(
+    eligible &&
+      recording &&
+      session.discard.eligible &&
+      session.discard.take?.generation === session.generation,
+  );
   $effect.pre(() => {
+    const take = session.discard.take;
+    const key = take
+      ? `${session.generation}:${take.start_sequence}:${take.id}`
+      : '';
+    if (key !== confirmedTake || !canDiscard) {
+      deleteTake = false;
+      confirmedTake = key;
+    }
     const focused = document.activeElement;
-    if (!eligible && (focused === primary || focused === secondary)) {
+    if (
+      !eligible &&
+      (focused === primary ||
+        focused === secondary ||
+        focused === discardCheckbox)
+    ) {
       void tick().then(() => heading?.focus());
+    } else if (!canDiscard && discardCheckbox && focused === discardCheckbox) {
+      void tick().then(() => primary?.focus());
     } else if (!recording && secondary && focused === secondary) {
       void tick().then(() => primary?.focus());
     }
@@ -57,9 +83,27 @@
       <button
         class="primary capture-primary"
         bind:this={primary}
-        onclick={() => onAction(recording ? 'stop' : 'start')}
-        >{t(language, recording ? 'stop' : 'start')}</button
+        onclick={() => {
+          if (recording && deleteTake && canDiscard) onDiscard();
+          else onAction(recording ? 'stop' : 'start');
+        }}
+        >{t(
+          language,
+          recording
+            ? deleteTake && canDiscard
+              ? 'stopAndDelete'
+              : 'stop'
+            : 'start',
+        )}</button
       >
+      {#if canDiscard}<label class="discard-choice"
+          ><input
+            name="discard-take"
+            type="checkbox"
+            bind:this={discardCheckbox}
+            bind:checked={deleteTake}
+          />{t(language, 'deleteTake')}</label
+        >{/if}
       {#if recording}<button
           class="capture-secondary"
           bind:this={secondary}
@@ -72,6 +116,19 @@
         >{/if}
     </div>
   {:else}<p>{t(language, session.condition)}</p>{/if}
+  {#if !['unavailable', 'tracking'].includes(session.discard.phase)}
+    <p data-discard-phase={session.discard.phase}>
+      {t(language, `discard_${session.discard.phase}`)}
+    </p>
+    {#if session.discard.reason && session.discard.reason !== `discard_${session.discard.phase}`}<p
+      >
+        {t(language, session.discard.reason)}
+      </p>{/if}
+  {:else if recording && !canDiscard && session.discard.reason}<p>
+      {t(language, session.discard.reason)}
+    </p>{/if}
+  {#if canDiscard}<p class="hint">{t(language, 'discardShortcutHelp')}</p>
+    <p class="hint">{t(language, 'discardAssumptionHelp')}</p>{/if}
   <p class="hint">{t(language, 'captureHelp')}</p>
   <p class="hint" dir="auto">{t(language, 'recordingKeys')}</p>
 </section>

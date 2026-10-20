@@ -35,6 +35,7 @@ export function createSession() {
   let flush: ReturnType<typeof setTimeout> | undefined;
   let unlisten: (() => void)[] = [];
   const progress = new Map<string, JobEvent>();
+  const discardResults = new Set<string>();
   const sound = (success: boolean) => {
     if (!success || data.settings.success_sound)
       void ipc.sound(success).catch(() => {});
@@ -57,6 +58,7 @@ export function createSession() {
         data.jobs = [];
         data.loading = false;
         progress.clear();
+        discardResults.clear();
         if (flush) clearTimeout(flush);
         flush = undefined;
       }
@@ -89,6 +91,7 @@ export function createSession() {
     else data.jobs = [event, ...data.jobs].slice(0, 20);
     if (['completed', 'failed', 'cancelled'].includes(event.status)) {
       progress.delete(event.id);
+      if (event.discard_operation_id) return;
       data.result = event.status === 'completed' ? 'completed' : event.message;
       void refresh();
     }
@@ -110,6 +113,25 @@ export function createSession() {
         ),
         ipc.listen<SessionState>('session-state', (value) => {
           if (!destroyed) controller.reconcile(value);
+        }),
+        ipc.listen<{
+          generation: number;
+          operation_id: string;
+          status: string;
+          code: string;
+        }>('discard-result', (value) => {
+          if (
+            destroyed ||
+            value.generation !== data.session.generation ||
+            discardResults.has(value.operation_id) ||
+            !['completed', 'retained', 'outcome_unknown'].includes(value.status)
+          )
+            return;
+          discardResults.add(value.operation_id);
+          if (discardResults.size > 128)
+            discardResults.delete(discardResults.values().next().value!);
+          data.result = value.code || `discard_${value.status}`;
+          if (value.status === 'completed') void refresh();
         }),
         ipc.listen<{
           generation: number;
@@ -234,6 +256,31 @@ export function createSession() {
   function activate(action: RecordingAction) {
     controller.activate(action);
   }
+  function discard() {
+    const generation = data.session.generation;
+    const current = data.session.discard.take;
+    if (
+      !data.session.connected ||
+      !current ||
+      current.generation !== generation
+    )
+      return;
+    const take = { ...current };
+    const rejected = (error: unknown) => {
+      if (
+        !destroyed &&
+        data.session.generation === generation &&
+        data.session.discard.take?.id === take.id &&
+        data.session.discard.take.start_sequence === take.start_sequence
+      )
+        fail(String(error));
+    };
+    try {
+      void ipc.discard(take, generation).catch(rejected);
+    } catch (error) {
+      rejected(error);
+    }
+  }
   function dispose() {
     destroyed = true;
     refreshSerial++;
@@ -248,6 +295,7 @@ export function createSession() {
     refresh,
     save,
     activate,
+    discard,
     fail,
     dispose,
     newWindow: () => {

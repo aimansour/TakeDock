@@ -76,6 +76,7 @@
       state={data.session}
       language={data.settings.language}
       onAction={app.activate}
+      onDiscard={app.discard}
     />{/if}
   {#if data.view === 'videos'}<VideosPanel
       videos={data.videos}

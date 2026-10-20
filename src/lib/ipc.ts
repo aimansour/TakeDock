@@ -8,6 +8,8 @@ import type {
   JobKind,
   CommandReceipt,
   JobEvent,
+  TakeToken,
+  DiscardReceipt,
 } from './types';
 import type { UpdateInfo } from './updater';
 export const ipc = {
@@ -24,6 +26,8 @@ export const ipc = {
   renameWindow: (name: string) => invoke<string>('rename_window', { name }),
   recording: (action: string, generation: number) =>
     invoke<CommandReceipt>('recording_action', { action, generation }),
+  discard: (take: TakeToken, generation: number) =>
+    invoke<DiscardReceipt>('discard_take', { take, generation }),
   videos: (generation: number) =>
     invoke<Video[]>('list_videos', { generation }),
   job: (kind: JobKind, videos: Video[], generation: number, newStem?: string) =>
