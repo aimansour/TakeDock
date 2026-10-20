@@ -6,13 +6,19 @@ No WebDriver plugin, test server, command mock or test hook is shipped in the
 application. One serial spec owns the shared Windows profile and restart flow.
 
 1. Offline launch, named keyboard controls, silent success defaults, named
-   Ctrl+Shift+N windows, shared settings and single-instance relaunch.
+   Ctrl+Shift+N windows, shared language/readiness settings, legacy readiness
+   defaults on/800, and single-instance relaunch.
 2. Start/pause/resume/stop and focus continuity while the external peer holds
    observation. All four shell commands must arrive before the barrier is
-   released. A stale observation cannot restore an inapplicable control.
+   released. Preparing remains after more than the default guard while
+   confirmation is held; later capture intents cancel it. A stale observation
+   cannot restore an inapplicable control. An independently confirmed Start
+   becomes ready, retains focus and is shared by a newly opened window.
 3. Two-file selection, single-only rename, container duration, completed native
-   progress and exact batch-copy SHA-256 outputs.
-4. Arabic/RTL, destination and optional success sound across an actual restart.
+   progress and exact batch-copy SHA-256 outputs. Recording reaches ready while
+   remote hash verification is held; the barrier is released in `finally`.
+4. Arabic/RTL, destination, optional success sound, and readiness off/1250 across
+   an actual restart, using explicit checkbox IDs.
 
 Install the pinned build dependencies, build Observer/file-helper resources,
 and run `npm run desktop:build -- --no-bundle`. In PowerShell call
@@ -76,13 +82,16 @@ use the current user's filtered token and preserve the existing Settings bytes.
 
 ## Development dependency decisions
 
-The published `extract-zip` package has no patched release for
-[symlink archive writes](https://github.com/advisories/GHSA-7pqw-9j4j-h8q3).
-WebdriverIO depends on it through an unused automatic browser downloader.
-TakeDock requires external drivers, so a clearly named local dependency guard
-replaces that unused extractor and always throws; it contains no extraction
-code and is not bundled in the app. Its test must fail if a downloader attempts
-archive extraction. Remove the override when upstream drops the affected
-dependency or publishes a verified fix. `serialize-javascript` is overridden
-to the current patched 7.1.2; the complete desktop suite verifies compatibility.
-No audit advisories are ignored. `npm audit` gates development dependencies too.
+WebdriverIO is pinned consistently to 10.1.0, with its Mocha 12 adapter. This
+replaces the old Mocha/chokidar/braces and browser-manager/proxy/FTP dependency
+chains that blocked the audit gate. See the
+[v10 migration guide](https://webdriver.io/docs/v10-migration) and
+[dependency acceptance record](../research/2026-10-20-desktop-test-dependencies.md).
+
+The new browser manager no longer depends on the vulnerable `extract-zip`
+package, so the former local throwing adapter, override and obsolete adapter
+test have been removed. The launcher still requires existing, version-matched
+external Tauri and Edge drivers and connects to their explicit local endpoint.
+`serialize-javascript` remains pinned to patched 7.1.2. No audit advisories are
+ignored; `npm audit` gates development dependencies too. All four real release
+desktop cases remain mandatory, including the existing failure/skip gate.

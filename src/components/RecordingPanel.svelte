@@ -34,7 +34,7 @@
   });
 </script>
 
-<section class="panel recording-panel">
+<section class="panel recording-panel" dir={language === 'ar' ? 'rtl' : 'ltr'}>
   <h2 bind:this={heading} tabindex="-1">{t(language, 'recording')}</h2>
   <p class="state-line">
     {t(
@@ -42,6 +42,16 @@
       session.predicted === 'recording' ? 'recordingState' : session.predicted,
     )}
   </p>
+  {#if session.speech_readiness !== 'inactive'}
+    <p id="speech-readiness" data-readiness={session.speech_readiness}>
+      {t(
+        language,
+        session.speech_readiness === 'preparing'
+          ? 'preparingToSpeak'
+          : 'readyToSpeak',
+      )}
+    </p>
+  {/if}
   {#if eligible}
     <div class="capture-actions">
       <button

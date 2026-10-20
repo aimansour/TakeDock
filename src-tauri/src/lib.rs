@@ -1,10 +1,12 @@
 pub mod adb;
+pub mod audio;
 #[cfg(feature = "desktop")]
 pub mod desktop;
 pub mod events;
 pub mod files;
 pub mod model;
 pub mod offers;
+pub mod readiness;
 pub mod recording;
 pub mod session;
 pub mod settings;

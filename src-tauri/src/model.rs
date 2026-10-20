@@ -19,6 +19,15 @@ pub enum RecordingAction {
     Resume,
 }
 
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SpeechReadiness {
+    #[default]
+    Inactive,
+    Preparing,
+    Ready,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Settings {
@@ -26,6 +35,8 @@ pub struct Settings {
     pub destination: String,
     pub adb_path: String,
     pub success_sound: bool,
+    pub ready_sound: bool,
+    pub ready_delay_ms: u64,
     pub verification_ms: u64,
 }
 impl Default for Settings {
@@ -35,6 +46,8 @@ impl Default for Settings {
             destination: String::new(),
             adb_path: String::new(),
             success_sound: false,
+            ready_sound: true,
+            ready_delay_ms: 800,
             verification_ms: 10_000,
         }
     }
@@ -55,12 +68,15 @@ pub struct Observation {
 pub struct VerificationResult {
     pub generation: u64,
     pub sequence: u64,
+    pub action: RecordingAction,
+    pub suppress_success_sound: bool,
     pub status: String,
     pub message: String,
 }
 
 #[derive(Debug, Clone, Serialize, Default)]
 pub struct SessionState {
+    pub speech_readiness: SpeechReadiness,
     pub generation: u64,
     pub revision: u64,
     pub connected: bool,

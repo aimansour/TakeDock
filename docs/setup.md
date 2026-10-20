@@ -25,11 +25,18 @@ may change. Both devices need a network allowing their connection. See
 Keep exactly one authorized `device`; disconnect other phones/emulators yourself.
 TakeDock does not pair, authorize or connect to network addresses.
 
+For quicker phone access on the tested Samsung Android 16 device, enable the
+native **Wireless debugging** tile under Developer options → Quick settings
+developer tiles, then add it to Quick Settings. Its long press opens the wireless
+debugging page directly, including pairing and connection details. This was
+verified on that phone; other manufacturers can arrange these controls differently.
+
 The destination defaults to your Windows Videos folder / TakeDock and is created
 automatically. Existing selected folders are preserved. Optionally change the
 destination in Settings and Save. Set `adb.exe` if absent from
 `PATH`. ADB/deadline changes apply on Reconnect; language, folder and optional
-success sound persist. Failure sounds are always enabled; success defaults off.
+success sound persist. Failure feedback is enabled; optional success feedback
+defaults off. The ready-to-speak cue has its own setting and defaults on.
 
 ## Phone configuration
 
@@ -44,6 +51,27 @@ It listens to events, preserves TalkBack, and needs no AccessibilityService togg
 The bundled MIT native helper manages the fixed video directory as the ADB shell
 user. Closing TakeDock stops the Observer; Reconnect establishes a new session.
 Changes to Open Camera version/language/layout/settings may need revalidation.
+
+## Starting a take
+
+After Start, **Preparing to speak** is ordinary text. A fresh camera confirmation
+starts the saved guard interval. **Ready to speak** appears when it expires, and
+one short PC cue plays through the Windows session's default audio output. Begin
+speaking after this cue finishes. Keep your headphones selected in Windows if
+you want to hear it there. The camera's own phone beep can precede actual capture.
+
+Settings provides **Play the ready-to-speak cue**, enabled independently of
+optional success feedback, and **Speech-readiness delay after confirmation
+(milliseconds)**. The initial guard is 800 ms; accepted values are 500–5000 in
+steps of 50. A changed delay or re-enabled cue applies to the next Start without
+reconnecting. Disabling invalidates pending playback while the ordinary readiness
+text can still advance. Reduce the delay only after checking the first spoken
+words on your phone; see the [acceptance procedure](testing/recording-readiness.md).
+
+Stop, Pause, lost camera eligibility, an unknown state after confirmation, or a
+connection change cancels a pending cue. Resume and opening another window do
+not replay it. Capture controls remain usable while preparation, audio or file
+operations run. The recorded preparation preamble stays in the video.
 
 ## Managing files
 

@@ -62,13 +62,42 @@ impl Events {
         if self.sounded.len() > 128 {
             self.sounded.pop_front();
         }
-        Some(success)
+        if event == "verification-result"
+            && success
+            && value["action"] == "start"
+            && value["suppress_success_sound"] == true
+        {
+            None
+        } else {
+            Some(success)
+        }
     }
 }
 #[cfg(test)]
 mod tests {
     use super::*;
     use serde_json::json;
+    #[test]
+    fn confirmed_start_does_not_play_early_success_feedback() {
+        let mut events = Events::default();
+        events.receive("session-state", &json!({"generation":7}));
+        let mut result = json!({"generation":7,"sequence":1,"action":"start",
+            "status":"confirmed","suppress_success_sound":true});
+        assert_eq!(events.receive("verification-result", &result), None);
+        result["suppress_success_sound"] = json!(false);
+        assert_eq!(events.receive("verification-result", &result), None);
+        for (sequence, action, status, suppressed, expected) in [
+            (2, "start", "confirmed", false, Some(true)),
+            (3, "pause", "confirmed", true, Some(true)),
+            (4, "start", "failed", true, Some(false)),
+            (5, "start", "unconfirmed", true, Some(false)),
+        ] {
+            let result = json!({"generation":7,"sequence":sequence,"action":action,
+                "status":status,"suppress_success_sound":suppressed});
+            assert_eq!(events.receive("verification-result", &result), expected);
+            assert_eq!(events.receive("verification-result", &result), None);
+        }
+    }
     #[test]
     fn shared_results_sound_once_and_ignore_superseded_or_stale_evidence() {
         let mut events = Events::default();

@@ -1,6 +1,8 @@
 export type RecordingState = 'unknown' | 'idle' | 'recording' | 'paused';
 export type RecordingAction = 'start' | 'stop' | 'pause' | 'resume';
+export type SpeechReadiness = 'inactive' | 'preparing' | 'ready';
 export interface SessionState {
+  speech_readiness: SpeechReadiness;
   generation: number;
   revision: number;
   connected: boolean;
@@ -23,6 +25,8 @@ export interface Settings {
   destination: string;
   adb_path: string;
   success_sound: boolean;
+  ready_sound: boolean;
+  ready_delay_ms: number;
   verification_ms: number;
 }
 export interface Video {
@@ -49,6 +53,7 @@ export interface JobEvent {
   results: { name: string; status: string; message: string }[];
 }
 export const initialSession: SessionState = {
+  speech_readiness: 'inactive',
   generation: 0,
   revision: 0,
   connected: false,
@@ -66,5 +71,7 @@ export const defaultSettings: Settings = {
   destination: '',
   adb_path: '',
   success_sound: false,
+  ready_sound: true,
+  ready_delay_ms: 800,
   verification_ms: 10000,
 };

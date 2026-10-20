@@ -1,0 +1,75 @@
+{
+  "commit": "d2b263de7bc773601c06d9b8c3bb68a5000f4124",
+  "os": "10.0.26300.0",
+  "node": "v24.21.0",
+  "webview2": "155.0.4283.62",
+  "edgeDriver": "155.0.4283.62",
+  "tauriDriver": "2.1.0",
+  "webdriverio": "10.1.0",
+  "resources": [
+    {
+      "sha256": "E87400397E94807A51B745F8C5889E8515D25301AA57A8B6CA3FB0E93F4CFC2A",
+      "name": "takedock.exe"
+    },
+    {
+      "sha256": "900F49466CABC4BB5A1100D0F148951B312FB2148BB1328AED88082FBFE7C54D",
+      "name": "observer.apk"
+    },
+    {
+      "sha256": "64CC3841ADD01CC4EEE548179CFDF86FC3B18B54145AC7C2A73A552DE9199F39",
+      "name": "file-helper/arm64-v8a/takedock-files"
+    },
+    {
+      "sha256": "2C3A1F39977F91C2B7CF19F271F35CE9F7515C7530C5F71C96CE04C546C7B1AC",
+      "name": "file-helper/x86_64/takedock-files"
+    },
+    {
+      "sha256": "B50B5466DA170A17BF66B72ED006956BC3C0296C37965AB2836B3F7D8497EAD5",
+      "name": "file-helper/armeabi-v7a/takedock-files"
+    },
+    {
+      "sha256": "A87A255A2623ABF43233FA2AF604111A262237A5A694366ED7C66B1C8B598445",
+      "name": "LICENSE"
+    },
+    {
+      "sha256": "D6AC286AA869661A3404E623FBAC548109B4CE830BC0EE14F5F4AB017615B7E3",
+      "name": "THIRD_PARTY_NOTICES.md"
+    },
+    {
+      "sha256": "EDAEDB573EFE262FA7882ED016AFC9CCA997D8AF4FE93DF99EE780B1DCAA222C",
+      "name": "third-party/inventory.json"
+    },
+    {
+      "sha256": "44CBCF0A73258389E095A714B6BD16341A4C40B4B56CBF87DFBC2CE7326ED3AA",
+      "name": "third-party/licenses.txt"
+    },
+    {
+      "sha256": "5C43E3E6DC3B8452EF478CA501A05759F923698AD2E5C5C7F8CFC5EF303DB44A",
+      "name": "third-party/supplemental.json"
+    },
+    {
+      "sha256": "B1BD46B9A0E9FFE3643B10BC0F015ED4C451BB63C0B8A517BC4A293A598FC942",
+      "name": "third-party/rust-standard-library.txt"
+    }
+  ],
+  "tests": [
+    {
+      "title": "launches offline with named keyboard controls and silent success defaults",
+      "passed": true
+    },
+    {
+      "title": "dispatches all four actions while verification is held and retains logical focus",
+      "passed": true
+    },
+    {
+      "title": "selects two videos, hides batch rename and copies verified bytes through Rust IPC",
+      "passed": true
+    },
+    {
+      "title": "persists Arabic, destination and optional success sound across application restart",
+      "passed": true
+    }
+  ],
+  "settings_bytes_restored": true,
+  "conclusion": "passed"
+}

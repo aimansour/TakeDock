@@ -14,6 +14,8 @@ pub fn ensure_destination(settings: &mut Settings, videos: &Path) -> Result<(), 
 fn validate(settings: &Settings) -> Result<(), String> {
     if !["en", "ar"].contains(&settings.language.as_str())
         || !(2000..=120_000).contains(&settings.verification_ms)
+        || !(500..=5000).contains(&settings.ready_delay_ms)
+        || !settings.ready_delay_ms.is_multiple_of(50)
     {
         return Err("invalid_settings".into());
     }
@@ -56,6 +58,85 @@ pub fn save(path: &Path, settings: &Settings) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn legacy_settings_default_readiness_without_replacing_existing_values() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("settings.json");
+        let destination = directory
+            .path()
+            .join("My videos")
+            .to_str()
+            .unwrap()
+            .to_owned();
+        let adb_path = directory
+            .path()
+            .join("adb.exe")
+            .to_str()
+            .unwrap()
+            .to_owned();
+        let legacy = serde_json::json!({"language":"ar", "destination":destination,
+            "adb_path":adb_path, "success_sound":true, "verification_ms":15000});
+        std::fs::write(&path, legacy.to_string()).unwrap();
+        let saved = load(&path).unwrap();
+        assert_eq!(saved.language, "ar");
+        assert_eq!(saved.destination, destination);
+        assert_eq!(saved.adb_path, adb_path);
+        assert!(saved.success_sound);
+        assert_eq!(saved.verification_ms, 15_000);
+        assert_eq!((saved.ready_sound, saved.ready_delay_ms), (true, 800));
+    }
+    #[test]
+    fn readiness_settings_survive_restart_independently_of_success_sound() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("settings.json");
+        let defaults = load(&path).unwrap();
+        assert_eq!((defaults.ready_sound, defaults.ready_delay_ms), (true, 800));
+        let settings = Settings {
+            ready_sound: false,
+            ready_delay_ms: 1250,
+            success_sound: true,
+            ..Default::default()
+        };
+        save(&path, &settings).unwrap();
+        let saved = load(&path).unwrap();
+        assert_eq!((saved.ready_sound, saved.ready_delay_ms), (false, 1250));
+        assert!(saved.success_sound);
+    }
+    #[test]
+    fn invalid_readiness_delay_preserves_the_last_good_file() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("settings.json");
+        for delay in [500, 800, 5000] {
+            save(
+                &path,
+                &Settings {
+                    ready_delay_ms: delay,
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+            assert_eq!(load(&path).unwrap().ready_delay_ms, delay);
+        }
+        let good = std::fs::read(&path).unwrap();
+        for delay in [499, 501, 525, 5001] {
+            assert_eq!(
+                save(
+                    &path,
+                    &Settings {
+                        ready_delay_ms: delay,
+                        ..Default::default()
+                    }
+                ),
+                Err("invalid_settings".into())
+            );
+            assert_eq!(std::fs::read(&path).unwrap(), good);
+        }
+    }
+    #[test]
+    fn new_session_serializes_inactive_speech_readiness() {
+        let wire = serde_json::to_value(crate::model::SessionState::default()).unwrap();
+        assert_eq!(wire["speech_readiness"], "inactive");
+    }
     #[test]
     fn default_destination_is_created_and_custom_directory_is_preserved() {
         let directory = tempfile::tempdir().unwrap();
