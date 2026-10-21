@@ -545,6 +545,14 @@ describe('TakeDock release desktop acceptance', () => {
       (element: HTMLElement) => element.focus(),
       protectedHide,
     );
+    assert.equal(
+      await browser.execute(
+        (element: HTMLElement) => document.activeElement === element,
+        protectedHide,
+      ),
+      true,
+      'The observer window must establish focus before later results arrive',
+    );
     await browser.switchToWindow(failureWindow);
     await button('Rename video').click();
     await $('#new-name').setValue('final-رحلة');
@@ -566,6 +574,16 @@ describe('TakeDock release desktop acceptance', () => {
         ),
     );
     assert.equal(await failureCard().isExisting(), true);
+    await browser.switchToWindow(observerWindow);
+    assert.equal(
+      await browser.execute(
+        (element: HTMLElement) => document.activeElement === element,
+        protectedHide,
+      ),
+      true,
+      'New results and passive expiry must preserve the observer focus',
+    );
+    await browser.switchToWindow(failureWindow);
     await failureCard().$('button').click();
     await waitFor(
       async () =>

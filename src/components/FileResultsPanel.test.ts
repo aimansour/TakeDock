@@ -77,6 +77,24 @@ it('remote_ack_and_passive_expiry_keep_focused_card', async () => {
   await tick();
   expect(screen.queryByRole('button', { name: /Hide result/ })).toBeNull();
 });
+it('keeps a focused result through newer notice arrival and retirement', async () => {
+  const failed = notice('failed', 'failed');
+  const { rerender } = render(FileResultsPanel, props([failed]));
+  const button = screen.getByRole('button', {
+    name: /Hide result.*failed\.mp4/,
+  });
+  button.focus();
+  await rerender({ notices: [notice('new'), failed] });
+  expect(screen.getByRole('button', { name: /Hide result.*failed\.mp4/ })).toBe(
+    button,
+  );
+  expect(button).toHaveFocus();
+  await rerender({ notices: [failed] });
+  expect(button).toHaveFocus();
+  await rerender({ notices: [] });
+  expect(button).toBeInTheDocument();
+  expect(button).toHaveFocus();
+});
 it('local hide returns focus once to history after its own acknowledgement', async () => {
   const user = userEvent.setup();
   let acknowledge!: () => void;
