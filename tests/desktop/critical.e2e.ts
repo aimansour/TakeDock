@@ -18,6 +18,7 @@ import {
   settingsPath,
   waitForBaseline,
   deleteCalls,
+  listedVideos,
 } from './fixtures';
 
 describe('TakeDock release desktop acceptance', () => {
@@ -364,6 +365,63 @@ describe('TakeDock release desktop acceptance', () => {
       hash(join(fixtureRoot, 'destination', 'take-0001.mp4')),
       hash(join(fixtureRoot, 'videos', 'take-0001.mp4')),
     );
+    await shortcut('v');
+    const initialVideo = (await listedVideos()).find(
+      (video) => video.name === 'رحلة.mp4',
+    );
+    assert.ok(initialVideo);
+    const sourceBox = await $(
+      '//label[span[normalize-space(.)="Select رحلة.mp4"]]/input',
+    );
+    await sourceBox.waitForExist();
+    if (await button('Clear selection').isExisting())
+      await button('Clear selection').click();
+    await sourceBox.click();
+    const originalElementId = sourceBox.elementId;
+    if (existsSync(join(fixtureRoot, 'index-started')))
+      unlinkSync(join(fixtureRoot, 'index-started'));
+    flag('hold-index');
+    try {
+      await button('Rename video').click();
+      await $('#new-name').setValue('renamed-رحلة');
+      await button('Save name').click();
+      await waitFor(() => existsSync(join(fixtureRoot, 'index-started')));
+      await browser.waitUntil(
+        async () =>
+          (await sourceBox.getComputedLabel()) === 'Select renamed-رحلة.mp4',
+        {
+          timeout: 1000,
+          interval: 50,
+          timeoutMsg:
+            'Confirmed rename did not reach the native label while indexing held the worker',
+        },
+      );
+      const renamedBox = await $(
+        '//label[span[normalize-space(.)="Select renamed-رحلة.mp4"]]/input',
+      );
+      assert.equal(renamedBox.elementId, originalElementId);
+      assert.equal(await renamedBox.isSelected(), true);
+      assert.equal(existsSync(join(fixtureRoot, 'hold-index')), true);
+      assert.equal(
+        (await $$('[aria-live], [role="status"], [role="alert"]')).length,
+        0,
+      );
+    } finally {
+      if (existsSync(join(fixtureRoot, 'hold-index')))
+        unlinkSync(join(fixtureRoot, 'hold-index'));
+    }
+    const renamed = (await listedVideos()).find(
+      (video) => video.name === 'renamed-رحلة.mp4',
+    );
+    assert.ok(renamed);
+    assert.notEqual(renamed.identity, initialVideo.identity);
+    for (const part of ['device', 'inode']) {
+      const exact = new RegExp(`"${part}":(\\d+)`);
+      assert.equal(
+        renamed.identity.match(exact)?.[1],
+        initialVideo.identity.match(exact)?.[1],
+      );
+    }
   });
   it('persists Arabic, destination and optional success sound across application restart', async () => {
     await restartFixture(false);

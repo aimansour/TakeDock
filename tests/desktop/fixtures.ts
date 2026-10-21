@@ -9,6 +9,25 @@ import {
 import { join } from 'node:path';
 import { randomUUID, createHash } from 'node:crypto';
 import { browser, $ } from '@wdio/globals';
+import type { Video } from '../../src/lib/types';
+
+export async function listedVideos(): Promise<Video[]> {
+  return browser.execute(async () => {
+    const api = (
+      window as unknown as {
+        __TAURI_INTERNALS__: {
+          invoke: (command: string, args?: unknown) => Promise<unknown>;
+        };
+      }
+    ).__TAURI_INTERNALS__;
+    const initial = (await api.invoke('bootstrap')) as {
+      session: { generation: number };
+    };
+    return (await api.invoke('list_videos', {
+      generation: initial.session.generation,
+    })) as Video[];
+  });
+}
 
 export let fixtureRoot = '';
 export const settingsPath = process.env.TAKEDOCK_SETTINGS_FILE!;
