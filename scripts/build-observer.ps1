@@ -5,6 +5,7 @@ if ($Configuration -eq 'Release' -and -not $env:OBSERVER_KEYSTORE) {
     throw 'Release builds require OBSERVER_KEYSTORE and the signing environment variables documented in docs/releasing.md.'
 }
 $projectRoot = Split-Path $PSScriptRoot -Parent
+& (Join-Path $PSScriptRoot 'observer-signing-identity.test.ps1')
 Push-Location (Join-Path $projectRoot 'observer')
 try {
     $wrapper=if($IsWindows){'./gradlew.bat'}else{'./gradlew'}

@@ -23,18 +23,23 @@ publication setup is documented below.
 
 ## Required GitHub Actions secrets
 
-| Name | Value |
-| --- | --- |
-| `TAURI_SIGNING_PRIVATE_KEY` | Exact encrypted Tauri private key content |
-| `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` | Tauri private key password |
-| `OBSERVER_KEYSTORE_BASE64` | Base64 of the persistent Android PKCS12 keystore |
-| `OBSERVER_STORE_PASSWORD` | Android keystore password |
-| `OBSERVER_KEY_PASSWORD` | Password for alias `takedock-observer` |
+| Name                                 | Value                                            |
+| ------------------------------------ | ------------------------------------------------ |
+| `TAURI_SIGNING_PRIVATE_KEY`          | Exact encrypted Tauri private key content        |
+| `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` | Tauri private key password                       |
+| `OBSERVER_KEYSTORE_BASE64`           | Base64 of the persistent Android PKCS12 keystore |
+| `OBSERVER_STORE_PASSWORD`            | Android keystore password                        |
+| `OBSERVER_KEY_PASSWORD`              | Password for alias `takedock-observer`           |
 
 Keep both signing identities across releases. The public Android certificate
 SHA-256 fingerprint is `observer/signing-certificate.sha256`; release builds
 must match it. The JVM reader tests use Debug, where current AGP enables unit
 tests; release APKs separately run full release lint and signing verification.
+The identity check accepts legacy `Signer #1` and current Build-Tools scheme
+labels such as `V2 Signer`, while requiring every reported APK signer digest to
+match the same pinned certificate. Missing, malformed, unrecognized or different
+signer identities fail closed. Pure parser regressions run before Observer builds;
+the real `apksigner verify` must also succeed before identity comparison.
 
 ## Publication gate
 
