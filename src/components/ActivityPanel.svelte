@@ -66,6 +66,9 @@
     {#if job.message}<p>{t(language, job.message)}</p>{/if}
   {:else if notice}
     <p>{t(language, notice.outcome)}</p>
+    {#if notice.outcome === 'retained' && ['discard_capture_changed', 'discard_cancelled'].includes(notice.code)}
+      <p>{t(language, 'cancelled')}</p>
+    {/if}
     <p>
       {t(language, notice.kind)} · <bdi>{notice.name}</bdi> · {notice.completed}/{notice.count}
       {t(language, 'count')}

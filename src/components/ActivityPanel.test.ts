@@ -99,3 +99,25 @@ it('retires terminal progress and keeps all active jobs cancellable', async () =
   });
   expect(screen.getAllByRole('button', { name: /Cancel/ })).toHaveLength(2);
 });
+it('keeps cancellation explicit when a guarded deletion retains the file', async () => {
+  const retained: FileNotice = {
+    ...notice('retained'),
+    kind: 'delete',
+    code: 'discard_capture_changed',
+  };
+  const { rerender } = render(ActivityPanel, {
+    jobs: [],
+    notices: [notice(), retained],
+    loading: false,
+    language: 'en',
+  });
+  expect(screen.getByRole('progressbar')).toHaveAttribute('value', '100');
+  await rerender({ notices: [retained] });
+  expect(screen.getByRole('progressbar')).toHaveAttribute('value', '0');
+  expect(screen.getByText('Cancelled')).toBeInTheDocument();
+  expect(screen.getByText('Retained on phone')).toBeInTheDocument();
+  await rerender({
+    notices: [{ ...retained, code: 'discard_inspection_failed' }],
+  });
+  expect(screen.queryByText('Cancelled')).toBeNull();
+});
