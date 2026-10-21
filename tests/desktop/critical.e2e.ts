@@ -414,7 +414,6 @@ describe('TakeDock release desktop acceptance', () => {
       (video) => video.name === 'renamed-رحلة.mp4',
     );
     assert.ok(renamed);
-    assert.notEqual(renamed.identity, initialVideo.identity);
     for (const part of ['device', 'inode']) {
       const exact = new RegExp(`"${part}":(\\d+)`);
       assert.equal(

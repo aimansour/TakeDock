@@ -82,19 +82,7 @@ pub fn parse_listing(bytes: &[u8]) -> Result<Vec<Video>, String> {
             continue;
         }
         let modified_ns = entry.identity.modified_ns;
-        videos.push((
-            modified_ns,
-            Video {
-                name: name.into(),
-                size: entry.identity.size,
-                modified_ms: (entry.identity.modified_ns / 1_000_000)
-                    .try_into()
-                    .map_err(err)?,
-                ready: entry.ready,
-                duration_ms: entry.duration_ms,
-                identity: serde_json::to_string(&entry.identity).map_err(err)?,
-            },
-        ));
+        videos.push((modified_ns, video_from_entry(entry)?));
     }
     videos.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| a.1.name.cmp(&b.1.name)));
     Ok(videos.into_iter().map(|(_, video)| video).collect())
@@ -108,6 +96,33 @@ pub struct Video {
     #[serde(default)]
     pub duration_ms: Option<u64>,
     pub identity: String,
+}
+pub fn confirmed_rename_video(
+    source: &Video,
+    destination_name: &str,
+    entry: Entry,
+) -> Result<Video, String> {
+    takedock_files::validate_name(destination_name)?;
+    let original: Identity = serde_json::from_str(&source.identity).map_err(err)?;
+    if entry.name != destination_name
+        || entry.identity.device != original.device
+        || entry.identity.inode != original.inode
+    {
+        return Err("source_changed".into());
+    }
+    video_from_entry(entry)
+}
+fn video_from_entry(entry: Entry) -> Result<Video, String> {
+    Ok(Video {
+        name: entry.name,
+        size: entry.identity.size,
+        modified_ms: (entry.identity.modified_ns / 1_000_000)
+            .try_into()
+            .map_err(err)?,
+        ready: entry.ready,
+        duration_ms: entry.duration_ms,
+        identity: serde_json::to_string(&entry.identity).map_err(err)?,
+    })
 }
 fn err(error: impl std::fmt::Display) -> String {
     error.to_string()
@@ -706,6 +721,64 @@ fn stream(
 #[cfg(test)]
 mod tests {
     use super::*;
+    fn rename_fixture() -> (Video, Entry) {
+        let identity = Identity {
+            device: 9_007_199_254_740_993,
+            inode: 9_007_199_254_740_995,
+            size: 7,
+            modified_ns: 1_700_000_000_123_456_789,
+            changed_ns: 1_700_000_000_123_456_790,
+        };
+        let source = Video {
+            name: "old.MP4".into(),
+            size: 7,
+            modified_ms: 1_700_000_000_123,
+            ready: true,
+            duration_ms: Some(100),
+            identity: serde_json::to_string(&identity).unwrap(),
+        };
+        let mut destination = Entry {
+            name: "رحلة'a.MP4".into(),
+            identity,
+            ready: true,
+            duration_ms: Some(300),
+        };
+        destination.identity.changed_ns += 1;
+        (source, destination)
+    }
+    #[test]
+    fn confirmed_rename_requires_expected_name_and_inode() {
+        let (source, entry) = rename_fixture();
+        assert!(confirmed_rename_video(&source, "رحلة'a.MP4", entry.clone()).is_ok());
+        for mismatch in ["name", "device", "inode"] {
+            let mut wrong = entry.clone();
+            match mismatch {
+                "name" => wrong.name = "different.MP4".into(),
+                "device" => wrong.identity.device += 1,
+                _ => wrong.identity.inode += 1,
+            }
+            assert!(confirmed_rename_video(&source, "رحلة'a.MP4", wrong).is_err());
+        }
+        assert!(confirmed_rename_video(&source, "../escape.MP4", entry).is_err());
+    }
+    #[test]
+    fn confirmed_rename_preserves_exact_large_identity() {
+        let (source, entry) = rename_fixture();
+        let video = confirmed_rename_video(&source, "رحلة'a.MP4", entry).unwrap();
+        assert_eq!(video.name, "رحلة'a.MP4");
+        assert_eq!(video.size, 7);
+        assert_eq!(video.modified_ms, 1_700_000_000_123);
+        assert_eq!(video.duration_ms, Some(300));
+        assert!(video.ready);
+        assert_ne!(video.identity, source.identity);
+        assert!(video.identity.contains("\"device\":9007199254740993"));
+        assert!(video.identity.contains("\"inode\":9007199254740995"));
+        assert!(
+            video
+                .identity
+                .contains("\"changed_ns\":1700000000123456791")
+        );
+    }
     #[test]
     fn remote_arguments_quote_apostrophes_unicode_and_newlines() {
         assert_eq!(
