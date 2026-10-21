@@ -1,7 +1,7 @@
 # Transient file results and accessible rename updates
 
 Date: 2026-10-20
-Status: written specification for user review; implementation is not approved yet.
+Status: written specification approved by the user on 2026-10-21; implementation plan review is next.
 Base: merged `main` at `4dc44e72498c1f455b4e43b40f8088a040ceb45d`.
 
 ## Intent and agreed behavior
