@@ -12,6 +12,11 @@
 
 ## Global Constraints
 
+**User amendment, 2026-10-21:** Compatible project dependency/build-tool updates
+and small required adjustments are explicitly authorized. Task 8 overrides the
+original no-upgrade/no-lockfile-churn requirement and baseline build pins below;
+the feature, accessibility, device-preservation and quality gates remain binding.
+
 - "Completed success leaves the main result/activity presentation after 10,000 ms from its first authoritative terminal result." Use one process-monotonic clock, never wall-clock time.
 - "Failed, cancelled/incomplete, retained and outcome-unknown results do not expire automatically." Completed-with-warning is persistent too; later success cannot dismiss an unresolved result.
 - "Keep the latest twenty ordinary terminal history entries, plus unresolved non-success/warning entries pinned until acknowledged." Process memory only; a restart clears presentation history.
@@ -231,6 +236,18 @@ Outcome revisions belong to one result; snapshot revisions belong to the whole m
 - [ ] **Step 7: Commit public-safe evidence** with named cases, red/green run links, tool versions, tested tree/EXE/helper hashes, native-versus-audible evidence, timings and limitations. Run `git diff --check`; rerun gates affected by any product/test fixes and verify final code tree equals the tested tree. Evidence-only commits may record an identical product tree explicitly.
 - [ ] **Step 8: Request one fresh whole-branch code review using the selected execution workflow.** Supply the approved spec, this plan, final diff and evidence, including all five Review Focus items. Resolve actionable findings, run their regressions and affected gates, and verify the final tree again. The review is mandatory for Native execution; no per-task subagents are needed for that method.
 - [ ] **Step 9: Finish the branch through the applicable Superpowers finishing workflow.** Update/attach the draft PR with final behavior and validation evidence, retain required checks and request user review. This plan does not authorize merging this new PR or publishing a release. Preserve the managed worktree, phone connection and private test backups; do not revive the prior plan's blocked cleanup.
+
+### Task 8: Compatible dependency and build-tool updates (user amendment)
+
+**Files:** `package.json`, `package-lock.json`, `Cargo.lock`, `src-tauri/Cargo.toml`, `rust-toolchain.toml`, current setup/CI/tool-version scripts, Gradle wrapper files, and generated third-party inventory/notices. Update consumers only where a compatible API needs a small adjustment.
+
+**Interfaces:** Preserve the approved feature/IPC contracts. Produce a locked graph of current compatible stable releases, with official registry/release metadata in this plan's private workspace and an explanatory public acceptance record. Unsupported major migrations are deferred with their concrete compatibility evidence.
+
+- [ ] Preserve the observed audit RED (Vite 8.3.1, one high-severity package); inventory npm/Rust/build/action versions from official sources before editing pins.
+- [ ] Update compatible stable dependencies and build pins, keeping exact root pins/checksums/action SHAs. Keep TypeScript 6.0.3 because current svelte-check 4.7.7 declares only `^5.0.0 || ^6.0.0`; do not force an unsupported peer graph.
+- [ ] Regenerate lockfiles and redistributed license/inventory artifacts; preserve real signature fixtures and all four native acceptance cases. Never run the quarantined fixture locally.
+- [ ] Verify audit at the existing threshold, formatting/check/full UI/library/helper tests, strict desktop Clippy/build, all three helper ABIs and Observer tests/lint/build. Run final clean hosted workspace/native gates through Task 7 on the final tree.
+- [ ] Commit compatible updates and report any versions held for demonstrated incompatibility; no further dependency approval is needed under the user's amendment.
 
 ## Plan self-review and handoff
 

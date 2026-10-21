@@ -54,6 +54,10 @@ transfer/hash algorithms, change destructive-operation permits, trim media, chan
 installer language, bundle ADB, implement wireless pairing, upgrade dependencies,
 or publish a release. Those remain later focused components. The existing wireless
 phone connection must remain active at the user's request.
+User amendment on 2026-10-21: compatible project dependency/build-tool updates
+and small necessary adjustments are explicitly authorized during this work. This
+overrides the original dependency-upgrade exclusion; device preservation,
+accessibility and all validation gates remain binding.
 Apply the new lifetime policy only to file-operation results; capture/settings
 messages keep their existing ownership and behavior.
 
