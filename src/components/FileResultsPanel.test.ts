@@ -95,6 +95,25 @@ it('keeps a focused result through newer notice arrival and retirement', async (
   expect(button).toBeInTheDocument();
   expect(button).toHaveFocus();
 });
+it('keeps a remotely hidden focused card in its original slot beside another result', async () => {
+  const failed = notice('failed', 'failed');
+  const retained = notice('retained', 'retained');
+  const { rerender, container } = render(
+    FileResultsPanel,
+    props([failed, retained]),
+  );
+  const button = screen.getByRole('button', {
+    name: /Hide result.*failed\.mp4/,
+  });
+  button.focus();
+  await rerender({ notices: [retained] });
+  expect(
+    [...container.querySelectorAll<HTMLElement>('.file-result-notice')].map(
+      (card) => card.dataset.operationId,
+    ),
+  ).toEqual(['failed', 'retained']);
+  expect(button).toHaveFocus();
+});
 it('local hide returns focus once to history after its own acknowledgement', async () => {
   const user = userEvent.setup();
   let acknowledge!: () => void;

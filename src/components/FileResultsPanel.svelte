@@ -30,14 +30,22 @@
   }
   $effect.pre(() => {
     const current = notices;
-    const keys = new Set(current.map((notice) => resultKey(notice.key)));
+    const incoming = new Map(
+      current.map((notice) => [resultKey(notice.key), notice]),
+    );
     const previous = untrack(() => rendered);
+    const previousKeys = new Set(
+      previous.map((notice) => resultKey(notice.key)),
+    );
+    // Moving a focused card to the end detaches its native focus in Chromium.
+    // Keep surviving cards in their existing slots; prepend only new results.
     rendered = [
-      ...current,
-      ...previous.filter(
-        (notice) =>
-          !keys.has(resultKey(notice.key)) && focused(resultKey(notice.key)),
-      ),
+      ...current.filter((notice) => !previousKeys.has(resultKey(notice.key))),
+      ...previous.flatMap((notice) => {
+        const key = resultKey(notice.key);
+        const fresh = incoming.get(key);
+        return fresh ? [fresh] : focused(key) ? [notice] : [];
+      }),
     ];
   });
   $effect.pre(() => {
