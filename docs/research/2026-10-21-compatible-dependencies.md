@@ -48,8 +48,8 @@ target/minimum policy is retained; a platform API target is an application
 compatibility requirement rather than a package patch version.
 
 After updating, local npm audit reports zero vulnerabilities, Svelte reports zero
-diagnostics and Vite production build passes. The current reconciler milestone
-passes 69 UI tests and 98 Rust library tests with strict desktop Clippy. All three
+diagnostics and Vite production build passes. The final local result/rename suites
+pass 86 UI tests and 98 Rust library tests with strict desktop Clippy. All three
 Android helper ABIs build on Rust 1.99.1, and all 25 helper cases pass (16 unit
 and nine integration cases). The actual updater signature example passes its signed fixture,
 corrupt rejection, version binding, downgrade and malformed-manifest checks.
@@ -57,8 +57,11 @@ corrupt rejection, version binding, downgrade and malformed-manifest checks.
 The local Java runtime is absent. Hosted Observer tests/lint/build and Node 26 UI
 gates passed in [Validate 39542130212](https://github.com/wip-bunker-42/TakeDock/actions/runs/39542130212),
 whose Rust job also passed the actual post-acknowledgement rename process tests.
-These are milestone checks: the final result/history views and final source tree
-must still pass every existing gate before acceptance.
+Final acceptance is now also verified in
+[Validate 39592390218](https://github.com/wip-bunker-42/TakeDock/actions/runs/39592390218):
+all five required jobs passed, including exactly four actual Windows release
+cases. Its artifact's complete source tree equals the tested branch source;
+details are in [the final acceptance record](2026-10-21-file-results-rename-acceptance.md).
 
 The inventory generator verified 321 redistributed dependency notices. The new
 tauri-plugin 2.7.2 crate omits its license text, so its supplemental text was fetched
