@@ -173,6 +173,7 @@ fn rename_update_precedes_held_index_and_next_job() {
         "verified rename update must precede media indexing"
     );
     let update = update.unwrap();
+    assert!(update["sequence"].as_u64().unwrap() > 0);
     assert_eq!(update["source_name"], original.name);
     assert_eq!(update["source_identity"], original.identity);
     assert_eq!(update["video"]["name"], "renamed.mp4");

@@ -158,6 +158,17 @@ pub struct FileResult {
     pub name: String,
     pub status: String,
     pub message: String,
+    pub requested_name: Option<String>,
+    pub destination_name: Option<String>,
+}
+#[derive(Clone, Debug, Serialize)]
+pub struct RenameUpdate {
+    pub generation: u64,
+    pub id: String,
+    pub sequence: u64,
+    pub source_name: String,
+    pub source_identity: String,
+    pub video: Video,
 }
 struct Job {
     event: JobEvent,
@@ -264,6 +275,7 @@ impl FileService {
         let worker = thread::spawn(move || {
             let sink = worker_sink;
             let mut remote = Remote::new(resources);
+            let mut sequence = 0_u64;
             for message in receiver {
                 match message {
                     Message::Discard(job) => {
@@ -279,11 +291,12 @@ impl FileService {
                         let _ = reply.send(result);
                     }
                     Message::Job(mut job) => {
+                        sequence += 1;
                         job.event.status = "running".into();
                         emit(&sink, &job.event);
                         let result = remote
                             .prepare(&job.lease)
-                            .and_then(|_| execute(&remote, &mut job, &sink));
+                            .and_then(|_| execute(&remote, &mut job, &sink, sequence));
                         job.event.status = if result.is_ok() {
                             "completed"
                         } else if job.cancel.load(Ordering::Acquire) {
@@ -298,6 +311,8 @@ impl FileService {
                                 name: video.name.clone(),
                                 status: "skipped".into(),
                                 message: job.event.message.clone(),
+                                requested_name: None,
+                                destination_name: None,
                             });
                         }
                         emit(&sink, &job.event);
@@ -466,7 +481,7 @@ pub(crate) fn hash_path(path: &Path) -> Result<String, String> {
         .map(|byte| format!("{byte:02x}"))
         .collect())
 }
-fn execute(remote: &Remote, job: &mut Job, sink: &EventSink) -> Result<(), String> {
+fn execute(remote: &Remote, job: &mut Job, sink: &EventSink, sequence: u64) -> Result<(), String> {
     let mut failure = None;
     for video in job.videos.clone() {
         if check(job).is_err() {
@@ -474,9 +489,17 @@ fn execute(remote: &Remote, job: &mut Job, sink: &EventSink) -> Result<(), Strin
                 name: video.name.clone(),
                 status: "cancelled".into(),
                 message: "operation_cancelled".into(),
+                requested_name: None,
+                destination_name: None,
             });
             return Err("operation_cancelled".into());
         }
+        let requested_name = if job.event.kind == JobKind::Rename {
+            Some(renamed(&video.name, job.new_stem.as_deref().unwrap())?)
+        } else {
+            None
+        };
+        let mut destination_name = None;
         let result = (|| -> Result<(), String> {
             check(job)?;
             job.event.name = video.name.clone();
@@ -545,13 +568,38 @@ fn execute(remote: &Remote, job: &mut Job, sink: &EventSink) -> Result<(), Strin
                     remote.job_output(job, &["delete", &video.name, &video.identity], 30_000)?;
                 }
                 JobKind::Rename => {
-                    let new_name = renamed(&video.name, job.new_stem.as_deref().unwrap())?;
+                    let new_name = requested_name.as_deref().unwrap();
                     check(job)?;
                     remote.job_output(
                         job,
-                        &["rename", &video.name, &new_name, &video.identity],
+                        &["rename", &video.name, new_name, &video.identity],
                         30_000,
                     )?;
+                    destination_name = Some(new_name.to_owned());
+                    let confirmed = remote
+                        .output(&job.lease, &["inspect", new_name], 5_000)
+                        .and_then(|bytes| serde_json::from_slice::<Entry>(&bytes).map_err(err))
+                        .and_then(|entry| confirmed_rename_video(&video, new_name, entry));
+                    match confirmed {
+                        Ok(renamed_video) => (sink)(
+                            "file-renamed",
+                            serde_json::to_value(RenameUpdate {
+                                generation: job.lease.generation,
+                                id: job.event.id.clone(),
+                                sequence,
+                                source_name: video.name.clone(),
+                                source_identity: video.identity.clone(),
+                                video: renamed_video,
+                            })
+                            .expect("rename update serialization"),
+                        ),
+                        Err(_) => (sink)(
+                            "file-metadata-warning",
+                            serde_json::json!({
+                                "generation":job.lease.generation,"id":job.event.id,"code":"rename_refresh_pending"
+                            }),
+                        ),
+                    }
                 }
             }
             if job.event.kind != JobKind::Copy {
@@ -613,6 +661,8 @@ fn execute(remote: &Remote, job: &mut Job, sink: &EventSink) -> Result<(), Strin
             name: video.name.clone(),
             status: status.into(),
             message,
+            requested_name,
+            destination_name,
         });
         emit(sink, &job.event);
     }
