@@ -46,6 +46,7 @@ export function createSession() {
   let flush: ReturnType<typeof setTimeout> | undefined;
   let unlisten: (() => void)[] = [];
   const progress = new Map<string, JobEvent>();
+  const terminalJobs = new Set<string>();
   const discardResults = new Set<string>();
   const renameUpdates = new RenameUpdates();
   const sound = (success: boolean) => {
@@ -84,6 +85,7 @@ export function createSession() {
         data.jobs = [];
         data.loading = false;
         progress.clear();
+        terminalJobs.clear();
         discardResults.clear();
         if (flush) clearTimeout(flush);
         flush = undefined;
@@ -103,6 +105,11 @@ export function createSession() {
   );
   function applyJob(event: JobEvent) {
     if (event.generation !== data.session.generation) return;
+    const terminal = ['completed', 'failed', 'cancelled'].includes(
+      event.status,
+    );
+    if (!terminal && terminalJobs.has(event.id)) return;
+    if (terminal) terminalJobs.add(event.id);
     const index = data.jobs.findIndex((job) => job.id === event.id);
     if (index >= 0) {
       const previous = data.jobs[index].status;
@@ -237,13 +244,27 @@ export function createSession() {
       data.windowName = initial.window_name;
       controller.reconcile(initial.session);
       fileResults.accept(initial.file_results, requestedAt);
+      for (const job of initial.jobs) {
+        if (
+          job.generation === data.session.generation &&
+          ['completed', 'failed', 'cancelled'].includes(job.status)
+        )
+          terminalJobs.add(job.id);
+      }
       const existing = new Set(data.jobs.map((job) => job.id));
       data.jobs = retainJobs([
         ...data.jobs,
-        ...initial.jobs.filter(
-          (job) =>
-            !existing.has(job.id) && job.generation === data.session.generation,
-        ),
+        ...initial.jobs
+          .filter(
+            (job) =>
+              !existing.has(job.id) &&
+              job.generation === data.session.generation,
+          )
+          .filter(
+            (job) =>
+              !['queued', 'running'].includes(job.status) ||
+              !terminalJobs.has(job.id),
+          ),
       ]);
       if (initial.errors.length) data.result = initial.errors.join('\n');
       if (initial.check_at_startup) void updater.checkForUpdate('startup');
@@ -373,6 +394,7 @@ export function createSession() {
           if (
             !destroyed &&
             generation === data.session.generation &&
+            !terminalJobs.has(id) &&
             !data.jobs.some((job) => job.id === id)
           )
             data.jobs = retainJobs([

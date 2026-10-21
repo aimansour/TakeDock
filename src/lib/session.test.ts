@@ -57,6 +57,97 @@ it('retains an active accepted job after twenty-one terminal results', async () 
   app.dispose();
 });
 
+it('does not revive an evicted terminal job from delayed acceptance or progress', async () => {
+  const callbacks = new Map<string, (value: unknown) => void>();
+  mocks.listen.mockImplementation((name, callback) => {
+    callbacks.set(name, callback);
+    return Promise.resolve(vi.fn());
+  });
+  let accept!: (id: string) => void;
+  mocks.job.mockImplementation(
+    () =>
+      new Promise((resolve) => {
+        accept = resolve;
+      }),
+  );
+  const app = createSession();
+  await app.initialize();
+  await app.refresh();
+  app.job('copy', [video]);
+  const terminal = {
+    id: 'first',
+    generation: 3,
+    kind: 'copy',
+    status: 'completed',
+    name: 'one.mp4',
+    completed: 1,
+    count: 1,
+    bytes: 10,
+    total: 10,
+    message: '',
+    results: [],
+  };
+  callbacks.get('file-job')?.(terminal);
+  for (let i = 0; i < 21; i++)
+    callbacks.get('file-job')?.({ ...terminal, id: `later-${i}` });
+  expect(app.data.jobs.some((job) => job.id === 'first')).toBe(false);
+  accept('first');
+  await Promise.resolve();
+  await Promise.resolve();
+  expect(app.data.jobs.some((job) => job.id === 'first')).toBe(false);
+  callbacks.get('file-job')?.({ ...terminal, status: 'queued' });
+  expect(app.data.jobs.some((job) => job.id === 'first')).toBe(false);
+  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+  try {
+    callbacks.get('file-job')?.({ ...terminal, status: 'running' });
+    await vi.advanceTimersByTimeAsync(100);
+    expect(app.data.jobs.some((job) => job.id === 'first')).toBe(false);
+  } finally {
+    vi.useRealTimers();
+  }
+  app.dispose();
+});
+
+it('does not revive evicted terminal work from a delayed bootstrap', async () => {
+  const initial = await mocks.bootstrap();
+  const callbacks = new Map<string, (value: unknown) => void>();
+  mocks.listen.mockImplementation((name, callback) => {
+    callbacks.set(name, callback);
+    return Promise.resolve(vi.fn());
+  });
+  let bootstrap!: (value: unknown) => void;
+  mocks.bootstrap.mockImplementation(
+    () =>
+      new Promise((resolve) => {
+        bootstrap = resolve;
+      }),
+  );
+  const app = createSession();
+  const initializing = app.initialize();
+  await vi.waitFor(() => expect(bootstrap).toBeTypeOf('function'));
+  callbacks.get('session-state')?.(initial.session);
+  const terminal = {
+    id: 'first',
+    generation: 3,
+    kind: 'copy',
+    status: 'completed',
+    name: 'one.mp4',
+    completed: 1,
+    count: 1,
+    bytes: 10,
+    total: 10,
+    message: '',
+    results: [],
+  };
+  callbacks.get('file-job')?.(terminal);
+  for (let i = 0; i < 21; i++)
+    callbacks.get('file-job')?.({ ...terminal, id: `later-${i}` });
+  bootstrap({ ...initial, jobs: [{ ...terminal, status: 'running' }] });
+  await initializing;
+  expect(app.data.jobs.some((job) => job.id === 'first')).toBe(false);
+  app.dispose();
+});
+
 it('file success cannot overwrite an unrelated verification message', async () => {
   const callbacks = new Map<string, (value: unknown) => void>();
   mocks.listen.mockImplementation(
