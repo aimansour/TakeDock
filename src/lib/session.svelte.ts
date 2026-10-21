@@ -6,7 +6,9 @@ import type {
   RecordingAction,
   SessionState,
   FileNotice,
+  RenameUpdate,
 } from './types';
+import { RenameUpdates } from './rename-updates';
 import { FileResultsController, type FileResultView } from './file-results';
 import { RecordingController } from './recording';
 import { ipc } from './ipc';
@@ -45,6 +47,7 @@ export function createSession() {
   let unlisten: (() => void)[] = [];
   const progress = new Map<string, JobEvent>();
   const discardResults = new Set<string>();
+  const renameUpdates = new RenameUpdates();
   const sound = (success: boolean) => {
     if (!success || data.settings.success_sound)
       void ipc.sound(success).catch(() => {});
@@ -75,6 +78,7 @@ export function createSession() {
         !session.connected
       ) {
         refreshSerial++;
+        renameUpdates.reset(session.generation);
         data.videos = [];
         data.listingGeneration = 0;
         data.jobs = [];
@@ -122,6 +126,20 @@ export function createSession() {
   async function initialize() {
     try {
       const outcomes = await Promise.allSettled([
+        ipc.listen<RenameUpdate>('file-renamed', (update) => {
+          if (
+            destroyed ||
+            !data.session.connected ||
+            !renameUpdates.record(update)
+          )
+            return;
+          refreshSerial++;
+          data.loading = false;
+          data.videos = renameUpdates.apply(
+            data.videos,
+            data.session.generation,
+          );
+        }),
         ipc.listen<{ revision: number }>('file-results-changed', (value) => {
           if (!destroyed) void fileResults.refresh(value.revision);
         }),
@@ -245,7 +263,7 @@ export function createSession() {
         request === refreshSerial &&
         generation === data.session.generation
       ) {
-        data.videos = videos;
+        data.videos = renameUpdates.apply(videos, generation);
         data.listingGeneration = generation;
       }
     } catch (error) {

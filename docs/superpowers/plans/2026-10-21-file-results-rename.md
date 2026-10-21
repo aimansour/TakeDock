@@ -74,7 +74,7 @@ FileNotice { key: ResultKey, revision: u64, kind: JobKind,
              expires_at_ms: Option<u64> }
 FileResultSnapshot { revision: u64, now_ms: u64,
                      notices: Vec<FileNotice>, history: Vec<FileNotice> }
-RenameUpdate { generation: u64, id: String, source_name: String,
+RenameUpdate { generation: u64, id: String, sequence: u64, source_name: String,
                source_identity: String, video: Video }
 ```
 

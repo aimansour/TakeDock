@@ -157,6 +157,107 @@ const video = {
   ready: true,
   identity: 'opaque',
 };
+it('old_listing_cannot_restore_renamed_identity', async () => {
+  const callbacks = new Map<string, (value: unknown) => void>();
+  mocks.listen.mockImplementation(
+    (name: string, callback: (value: unknown) => void) => {
+      callbacks.set(name, callback);
+      return Promise.resolve(vi.fn());
+    },
+  );
+  const a = {
+    ...video,
+    identity:
+      '{"device":9007199254740993,"inode":9007199254740995,"size":10,"modified_ns":0,"changed_ns":1}',
+  };
+  const b = {
+    ...a,
+    name: 'renamed.mp4',
+    duration_ms: 123,
+    identity: a.identity.replace('"changed_ns":1', '"changed_ns":2'),
+  };
+  mocks.videos.mockResolvedValueOnce([a] as never);
+  const app = createSession();
+  await app.initialize();
+  await app.refresh();
+  let finish!: (value: never) => void;
+  mocks.videos.mockImplementationOnce(
+    () =>
+      new Promise((resolve) => {
+        finish = resolve;
+      }),
+  );
+  const old = app.refresh();
+  callbacks.get('file-renamed')?.({
+    generation: 3,
+    id: 'rename',
+    sequence: 1,
+    source_name: a.name,
+    source_identity: a.identity,
+    video: b,
+  });
+  expect(app.data.videos).toEqual([b]);
+  expect(app.data.loading).toBe(false);
+  finish([a] as never);
+  await old;
+  expect(app.data.videos).toEqual([b]);
+  mocks.videos.mockResolvedValueOnce([a] as never);
+  await app.refresh();
+  expect(app.data.videos).toEqual([b]);
+  expect(mocks.sound).not.toHaveBeenCalled();
+  expect(mocks.recording).not.toHaveBeenCalled();
+  app.dispose();
+});
+it('rename_invalidation_releases_loading_owner', async () => {
+  const callbacks = new Map<string, (value: unknown) => void>();
+  mocks.listen.mockImplementation(
+    (name: string, callback: (value: unknown) => void) => {
+      callbacks.set(name, callback);
+      return Promise.resolve(vi.fn());
+    },
+  );
+  const a = {
+    ...video,
+    identity: '{"device":1,"inode":2,"size":10,"modified_ns":0,"changed_ns":1}',
+  };
+  const b = { ...a, name: 'new.mp4' };
+  const app = createSession();
+  await app.initialize();
+  let rejectOld!: (reason: unknown) => void;
+  mocks.videos.mockImplementationOnce(
+    () =>
+      new Promise((_, reject) => {
+        rejectOld = reject;
+      }),
+  );
+  const old = app.refresh();
+  callbacks.get('file-renamed')?.({
+    generation: 3,
+    id: 'rename',
+    sequence: 1,
+    source_name: a.name,
+    source_identity: a.identity,
+    video: b,
+  });
+  expect(app.data.loading).toBe(false);
+  let finishNew!: (value: never) => void;
+  mocks.videos.mockImplementationOnce(
+    () =>
+      new Promise((resolve) => {
+        finishNew = resolve;
+      }),
+  );
+  const fresh = app.refresh();
+  rejectOld('obsolete listing error');
+  await old;
+  expect(app.data.loading).toBe(true);
+  expect(app.data.result).toBe('');
+  finishNew([a] as never);
+  await fresh;
+  expect(app.data.videos).toEqual([b]);
+  expect(app.data.loading).toBe(false);
+  app.dispose();
+});
 beforeEach(() => {
   vi.clearAllMocks();
   mocks.bootstrap.mockResolvedValue({
@@ -188,7 +289,7 @@ it('unsubscribes successful listeners when one subscription fails', async () => 
   const app = createSession();
   await app.initialize();
   app.dispose();
-  expect(stop).toHaveBeenCalledTimes(7);
+  expect(stop).toHaveBeenCalledTimes(8);
 });
 it('shares settings changes and consumes asynchronous feedback without extra sounds', async () => {
   const callbacks = new Map<string, (value: unknown) => void>();

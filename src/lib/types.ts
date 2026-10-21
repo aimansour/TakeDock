@@ -105,6 +105,7 @@ export interface FileResultSnapshot {
 export interface RenameUpdate {
   generation: number;
   id: string;
+  sequence: number;
   source_name: string;
   source_identity: string;
   video: Video;
