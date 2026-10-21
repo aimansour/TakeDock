@@ -310,6 +310,17 @@ describe('TakeDock release desktop acceptance', () => {
         (await $('#activity-progress').getAttribute('value')) === '100',
     );
     assert.equal(await $('#activity-progress').getAttribute('value'), '100');
+    const history = await $('.file-results-panel details');
+    await history.waitForExist();
+    assert.equal(await history.getAttribute('open'), null);
+    await waitFor(
+      async () => (await $('#activity-progress').getAttribute('value')) === '0',
+    );
+    assert.match(await $('.activity-panel').getText(), /Ready/);
+    assert.equal((await $$('.file-result-notice')).length, 0);
+    await $('.file-results-panel summary').click();
+    assert.match(await history.getText(), /2\/2/);
+    await $('.file-results-panel summary').click();
     assert.equal(deleteCalls().length, 0);
     assert.equal(
       existsSync(join(fixtureRoot, 'videos', 'take-0001.mp4')),
