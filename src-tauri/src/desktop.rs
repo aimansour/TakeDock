@@ -2,6 +2,7 @@ use crate::updates::{UpdateInfo, Updates};
 use crate::{
     audio::{AudioDispatcher, play_system_tone},
     events::Events,
+    file_results::{FileResultSnapshot, FileResultStore, ResultKey},
     files::{FileService, JobKind, Video},
     model::*,
     readiness::{ReadinessPolicy, ReadyToken},
@@ -32,6 +33,7 @@ struct Runtime {
     updates: Updates,
     windows: Mutex<Windows>,
     events: Arc<Mutex<Events>>,
+    file_results: Arc<FileResultStore>,
     startup_checked: AtomicBool,
     stopped: AtomicBool,
 }
@@ -82,6 +84,7 @@ struct Bootstrap {
     errors: Vec<String>,
     window_name: String,
     jobs: Vec<serde_json::Value>,
+    file_results: FileResultSnapshot,
     check_at_startup: bool,
 }
 #[tauri::command]
@@ -95,8 +98,28 @@ fn bootstrap(window: tauri::WebviewWindow, state: State<'_, Arc<Runtime>>) -> Bo
         errors: state.errors.lock().unwrap().clone(),
         window_name: state.windows.lock().unwrap().name(window.label()),
         jobs: state.events.lock().unwrap().jobs.clone(),
+        file_results: state.file_results.snapshot(),
         check_at_startup: !state.startup_checked.swap(true, Ordering::AcqRel),
     }
+}
+#[tauri::command]
+fn file_results(state: State<'_, Arc<Runtime>>) -> FileResultSnapshot {
+    state.file_results.snapshot()
+}
+#[tauri::command]
+fn acknowledge_file_result(
+    key: ResultKey,
+    revision: u64,
+    app: tauri::AppHandle,
+    state: State<'_, Arc<Runtime>>,
+) -> FileResultSnapshot {
+    if let Some(revision) = state.file_results.acknowledge(&key, revision) {
+        let _ = app.emit(
+            "file-results-changed",
+            serde_json::json!({"revision":revision}),
+        );
+    }
+    state.file_results.snapshot()
 }
 #[tauri::command]
 fn recording_action(
@@ -307,6 +330,8 @@ pub fn run() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         .invoke_handler(tauri::generate_handler![
             bootstrap,
+            file_results,
+            acknowledge_file_result,
             recording_action,
             discard_take,
             list_videos,
@@ -346,6 +371,10 @@ pub fn run() {
             }
             let settings = Arc::new(Mutex::new(saved));
             let events = Arc::new(Mutex::new(Events::default()));
+            let origin = std::time::Instant::now();
+            let file_results = Arc::new(FileResultStore::new(Arc::new(move || {
+                origin.elapsed().as_millis().try_into().unwrap_or(u64::MAX)
+            })));
             let engine: Arc<RwLock<Option<Arc<Engine>>>> = Arc::new(RwLock::new(None));
             let claim_slot = Arc::downgrade(&engine);
             let failure_slot = Arc::downgrade(&engine);
@@ -385,8 +414,15 @@ pub fn run() {
             let event_settings = settings.clone();
             let history = events.clone();
             let event_audio = audio.clone();
+            let result_store = file_results.clone();
             let sink: EventSink = Arc::new(move |event, payload| {
                 let sound = history.lock().unwrap().receive(event, &payload);
+                if let Some(revision) = result_store.receive(event, &payload) {
+                    let _ = handle.emit(
+                        "file-results-changed",
+                        serde_json::json!({"revision":revision}),
+                    );
+                }
                 if let Some(success) = sound
                     && (!success || event_settings.lock().unwrap().success_sound)
                 {
@@ -413,6 +449,7 @@ pub fn run() {
                 updates: Updates::default(),
                 windows: Mutex::new(windows),
                 events,
+                file_results,
                 startup_checked: AtomicBool::new(false),
                 stopped: AtomicBool::new(false),
             });

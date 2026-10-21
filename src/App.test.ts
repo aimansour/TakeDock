@@ -9,9 +9,12 @@ const mocks = vi.hoisted(() => ({
   discard: vi.fn(),
   sound: vi.fn(),
   videos: vi.fn(),
+  fileResults: vi.fn(),
+  acknowledgeFileResult: vi.fn(),
 }));
 vi.mock('./lib/ipc', () => ({ ipc: mocks }));
 import App from './App.svelte';
+import { tick } from 'svelte';
 const take = { generation: 7, start_sequence: 1, id: 'take-1' };
 beforeEach(() => {
   vi.clearAllMocks();
@@ -19,6 +22,7 @@ beforeEach(() => {
     settings: defaultSettings,
     errors: [],
     window_name: '',
+    file_results: { revision: 0, now_ms: 0, notices: [], history: [] },
     jobs: [],
     check_at_startup: false,
     session: {
@@ -74,4 +78,58 @@ it('sends the exact take token only from the confirmed primary button', async ()
   await user.click(screen.getByRole('button', { name: 'Stop and delete' }));
   expect(mocks.discard).toHaveBeenCalledWith(take, 7);
   expect(mocks.recording).not.toHaveBeenCalled();
+});
+it('success_expires_from_notice_activity_and_expanded_job_surfaces', async () => {
+  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'performance'] });
+  const terminal = {
+    id: 'copy-done',
+    generation: 7,
+    kind: 'copy',
+    status: 'completed',
+    name: 'clip.mp4',
+    bytes: 10,
+    total: 10,
+    completed: 1,
+    count: 1,
+    message: '',
+    results: [{ name: 'clip.mp4', status: 'completed', message: '' }],
+  };
+  const notice = {
+    ...terminal,
+    key: { generation: 7, owner: 'job', operation_id: terminal.id },
+    revision: 1,
+    outcome: 'completed',
+    code: 'completed',
+    warnings: [],
+    expires_at_ms: 10000,
+  };
+  const initial = await mocks.bootstrap();
+  mocks.bootstrap.mockResolvedValue({
+    ...initial,
+    jobs: [terminal],
+    file_results: {
+      revision: 1,
+      now_ms: 0,
+      notices: [notice],
+      history: [notice],
+    },
+  });
+  const { container } = render(App);
+  try {
+    for (let i = 0; i < 8; i++) await tick();
+    expect(screen.getByRole('progressbar')).toHaveAttribute('value', '100');
+    expect(container.querySelectorAll('.file-result-notice')).toHaveLength(1);
+    expect(container.querySelector('details')?.open).toBe(false);
+    vi.advanceTimersByTime(10000);
+    await tick();
+    expect(container.querySelectorAll('.file-result-notice')).toHaveLength(0);
+    expect(screen.getByRole('progressbar')).toHaveAttribute('value', '0');
+    expect(container.querySelector('.activity-panel')).toHaveTextContent(
+      'Ready',
+    );
+    expect(container.querySelectorAll('details article')).toHaveLength(1);
+    expect(container.querySelectorAll('article')).toHaveLength(1);
+  } finally {
+    vi.useRealTimers();
+  }
 });

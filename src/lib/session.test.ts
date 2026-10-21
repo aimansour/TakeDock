@@ -15,9 +15,272 @@ const mocks = vi.hoisted(() => ({
   installUpdate: vi.fn(),
   newWindow: vi.fn(),
   renameWindow: vi.fn(),
+  fileResults: vi.fn(),
+  acknowledgeFileResult: vi.fn(),
 }));
 vi.mock('./ipc', () => ({ ipc: mocks }));
 import { createSession } from './session.svelte';
+
+it('retains an active accepted job after twenty-one terminal results', async () => {
+  const callbacks = new Map<string, (value: unknown) => void>();
+  mocks.listen.mockImplementation(
+    (name: string, callback: (value: unknown) => void) => {
+      callbacks.set(name, callback);
+      return Promise.resolve(vi.fn());
+    },
+  );
+  const app = createSession();
+  await app.initialize();
+  const queued = {
+    id: 'held',
+    generation: 3,
+    kind: 'copy',
+    status: 'queued',
+    name: 'one.mp4',
+    completed: 0,
+    count: 1,
+    bytes: 0,
+    total: 10,
+    message: '',
+    results: [],
+  };
+  callbacks.get('file-job')?.(queued);
+  for (let i = 0; i < 21; i++)
+    callbacks.get('file-job')?.({
+      ...queued,
+      id: `done-${i}`,
+      status: 'completed',
+    });
+  expect(app.data.jobs.some((job) => job.id === 'held')).toBe(true);
+  app.cancel('held');
+  expect(mocks.cancel).toHaveBeenCalledWith('held');
+  app.dispose();
+});
+
+it('does not revive an evicted terminal job from delayed acceptance or progress', async () => {
+  const callbacks = new Map<string, (value: unknown) => void>();
+  mocks.listen.mockImplementation((name, callback) => {
+    callbacks.set(name, callback);
+    return Promise.resolve(vi.fn());
+  });
+  let accept!: (id: string) => void;
+  mocks.job.mockImplementation(
+    () =>
+      new Promise((resolve) => {
+        accept = resolve;
+      }),
+  );
+  const app = createSession();
+  await app.initialize();
+  await app.refresh();
+  app.job('copy', [video]);
+  const terminal = {
+    id: 'first',
+    generation: 3,
+    kind: 'copy',
+    status: 'completed',
+    name: 'one.mp4',
+    completed: 1,
+    count: 1,
+    bytes: 10,
+    total: 10,
+    message: '',
+    results: [],
+  };
+  callbacks.get('file-job')?.(terminal);
+  for (let i = 0; i < 21; i++)
+    callbacks.get('file-job')?.({ ...terminal, id: `later-${i}` });
+  expect(app.data.jobs.some((job) => job.id === 'first')).toBe(false);
+  accept('first');
+  await Promise.resolve();
+  await Promise.resolve();
+  expect(app.data.jobs.some((job) => job.id === 'first')).toBe(false);
+  callbacks.get('file-job')?.({ ...terminal, status: 'queued' });
+  expect(app.data.jobs.some((job) => job.id === 'first')).toBe(false);
+  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+  try {
+    callbacks.get('file-job')?.({ ...terminal, status: 'running' });
+    await vi.advanceTimersByTimeAsync(100);
+    expect(app.data.jobs.some((job) => job.id === 'first')).toBe(false);
+  } finally {
+    vi.useRealTimers();
+  }
+  app.dispose();
+});
+
+it('does not revive evicted terminal work from a delayed bootstrap', async () => {
+  const initial = await mocks.bootstrap();
+  const callbacks = new Map<string, (value: unknown) => void>();
+  mocks.listen.mockImplementation((name, callback) => {
+    callbacks.set(name, callback);
+    return Promise.resolve(vi.fn());
+  });
+  let bootstrap!: (value: unknown) => void;
+  mocks.bootstrap.mockImplementation(
+    () =>
+      new Promise((resolve) => {
+        bootstrap = resolve;
+      }),
+  );
+  const app = createSession();
+  const initializing = app.initialize();
+  await vi.waitFor(() => expect(bootstrap).toBeTypeOf('function'));
+  callbacks.get('session-state')?.(initial.session);
+  const terminal = {
+    id: 'first',
+    generation: 3,
+    kind: 'copy',
+    status: 'completed',
+    name: 'one.mp4',
+    completed: 1,
+    count: 1,
+    bytes: 10,
+    total: 10,
+    message: '',
+    results: [],
+  };
+  callbacks.get('file-job')?.(terminal);
+  for (let i = 0; i < 21; i++)
+    callbacks.get('file-job')?.({ ...terminal, id: `later-${i}` });
+  bootstrap({ ...initial, jobs: [{ ...terminal, status: 'running' }] });
+  await initializing;
+  expect(app.data.jobs.some((job) => job.id === 'first')).toBe(false);
+  app.dispose();
+});
+
+it('reconciles a bootstrap terminal result over an earlier queued event', async () => {
+  const initial = await mocks.bootstrap();
+  const callbacks = new Map<string, (value: unknown) => void>();
+  mocks.listen.mockImplementation((name, callback) => {
+    callbacks.set(name, callback);
+    return Promise.resolve(vi.fn());
+  });
+  let bootstrap!: (value: unknown) => void;
+  mocks.bootstrap.mockImplementation(
+    () =>
+      new Promise((resolve) => {
+        bootstrap = resolve;
+      }),
+  );
+  const app = createSession();
+  const initializing = app.initialize();
+  await vi.waitFor(() => expect(bootstrap).toBeTypeOf('function'));
+  callbacks.get('session-state')?.(initial.session);
+  const terminal = {
+    id: 'first',
+    generation: 3,
+    kind: 'copy',
+    status: 'completed',
+    name: 'one.mp4',
+    completed: 1,
+    count: 1,
+    bytes: 10,
+    total: 10,
+    message: '',
+    results: [],
+  };
+  callbacks.get('file-job')?.({ ...terminal, status: 'queued' });
+  bootstrap({ ...initial, jobs: [terminal] });
+  await initializing;
+  expect(app.data.jobs.find((job) => job.id === 'first')?.status).toBe(
+    'completed',
+  );
+  app.dispose();
+});
+
+it('file success cannot overwrite an unrelated verification message', async () => {
+  const callbacks = new Map<string, (value: unknown) => void>();
+  mocks.listen.mockImplementation(
+    (name: string, callback: (value: unknown) => void) => {
+      callbacks.set(name, callback);
+      return Promise.resolve(vi.fn());
+    },
+  );
+  const app = createSession();
+  await app.initialize();
+  callbacks.get('verification-result')?.({
+    generation: 3,
+    sequence: 1,
+    status: 'unconfirmed',
+    message: 'verification_unconfirmed',
+  });
+  callbacks.get('file-job')?.({
+    id: 'done',
+    generation: 3,
+    kind: 'copy',
+    status: 'completed',
+    name: 'one.mp4',
+    completed: 1,
+    count: 1,
+    bytes: 10,
+    total: 10,
+    message: '',
+    results: [],
+  });
+  expect(app.data.result).toBe('verification_unconfirmed');
+  app.dispose();
+});
+
+it('expires a bootstrap file success without listing, audio or capture work', async () => {
+  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'performance'] });
+  const callbacks = new Map<string, (value: unknown) => void>();
+  mocks.listen.mockImplementation(
+    (name: string, callback: (value: unknown) => void) => {
+      callbacks.set(name, callback);
+      return Promise.resolve(vi.fn());
+    },
+  );
+  const notice = {
+    key: { generation: 3, owner: 'job', operation_id: 'done' },
+    revision: 1,
+    kind: 'copy',
+    outcome: 'completed',
+    code: 'completed',
+    warnings: [],
+    name: 'one.mp4',
+    completed: 1,
+    count: 1,
+    results: [],
+    expires_at_ms: 10_000,
+  };
+  mocks.bootstrap.mockResolvedValue({
+    session: { ...initialSession, generation: 3, connected: true },
+    settings: defaultSettings,
+    errors: [],
+    window_name: '',
+    jobs: [],
+    check_at_startup: false,
+    file_results: {
+      revision: 1,
+      now_ms: 0,
+      notices: [notice],
+      history: [notice],
+    },
+  });
+  const app = createSession();
+  try {
+    await app.initialize();
+    expect(app.data.fileResults.notices).toHaveLength(1);
+    callbacks.get('verification-result')?.({
+      generation: 3,
+      sequence: 1,
+      status: 'unconfirmed',
+      message: 'verification_unconfirmed',
+    });
+    vi.advanceTimersByTime(9_999);
+    expect(app.data.fileResults.notices).toHaveLength(1);
+    vi.advanceTimersByTime(1);
+    expect(app.data.fileResults.notices).toHaveLength(0);
+    expect(app.data.fileResults.history).toHaveLength(1);
+    expect(app.data.result).toBe('verification_unconfirmed');
+    expect(mocks.videos).not.toHaveBeenCalled();
+    expect(mocks.sound).not.toHaveBeenCalled();
+    expect(mocks.recording).not.toHaveBeenCalled();
+  } finally {
+    app.dispose();
+    vi.useRealTimers();
+  }
+});
 const video = {
   name: 'one.mp4',
   size: 10,
@@ -25,6 +288,107 @@ const video = {
   ready: true,
   identity: 'opaque',
 };
+it('old_listing_cannot_restore_renamed_identity', async () => {
+  const callbacks = new Map<string, (value: unknown) => void>();
+  mocks.listen.mockImplementation(
+    (name: string, callback: (value: unknown) => void) => {
+      callbacks.set(name, callback);
+      return Promise.resolve(vi.fn());
+    },
+  );
+  const a = {
+    ...video,
+    identity:
+      '{"device":9007199254740993,"inode":9007199254740995,"size":10,"modified_ns":0,"changed_ns":1}',
+  };
+  const b = {
+    ...a,
+    name: 'renamed.mp4',
+    duration_ms: 123,
+    identity: a.identity.replace('"changed_ns":1', '"changed_ns":2'),
+  };
+  mocks.videos.mockResolvedValueOnce([a] as never);
+  const app = createSession();
+  await app.initialize();
+  await app.refresh();
+  let finish!: (value: never) => void;
+  mocks.videos.mockImplementationOnce(
+    () =>
+      new Promise((resolve) => {
+        finish = resolve;
+      }),
+  );
+  const old = app.refresh();
+  callbacks.get('file-renamed')?.({
+    generation: 3,
+    id: 'rename',
+    sequence: 1,
+    source_name: a.name,
+    source_identity: a.identity,
+    video: b,
+  });
+  expect(app.data.videos).toEqual([b]);
+  expect(app.data.loading).toBe(false);
+  finish([a] as never);
+  await old;
+  expect(app.data.videos).toEqual([b]);
+  mocks.videos.mockResolvedValueOnce([a] as never);
+  await app.refresh();
+  expect(app.data.videos).toEqual([b]);
+  expect(mocks.sound).not.toHaveBeenCalled();
+  expect(mocks.recording).not.toHaveBeenCalled();
+  app.dispose();
+});
+it('rename_invalidation_releases_loading_owner', async () => {
+  const callbacks = new Map<string, (value: unknown) => void>();
+  mocks.listen.mockImplementation(
+    (name: string, callback: (value: unknown) => void) => {
+      callbacks.set(name, callback);
+      return Promise.resolve(vi.fn());
+    },
+  );
+  const a = {
+    ...video,
+    identity: '{"device":1,"inode":2,"size":10,"modified_ns":0,"changed_ns":1}',
+  };
+  const b = { ...a, name: 'new.mp4' };
+  const app = createSession();
+  await app.initialize();
+  let rejectOld!: (reason: unknown) => void;
+  mocks.videos.mockImplementationOnce(
+    () =>
+      new Promise((_, reject) => {
+        rejectOld = reject;
+      }),
+  );
+  const old = app.refresh();
+  callbacks.get('file-renamed')?.({
+    generation: 3,
+    id: 'rename',
+    sequence: 1,
+    source_name: a.name,
+    source_identity: a.identity,
+    video: b,
+  });
+  expect(app.data.loading).toBe(false);
+  let finishNew!: (value: never) => void;
+  mocks.videos.mockImplementationOnce(
+    () =>
+      new Promise((resolve) => {
+        finishNew = resolve;
+      }),
+  );
+  const fresh = app.refresh();
+  rejectOld('obsolete listing error');
+  await old;
+  expect(app.data.loading).toBe(true);
+  expect(app.data.result).toBe('');
+  finishNew([a] as never);
+  await fresh;
+  expect(app.data.videos).toEqual([b]);
+  expect(app.data.loading).toBe(false);
+  app.dispose();
+});
 beforeEach(() => {
   vi.clearAllMocks();
   mocks.bootstrap.mockResolvedValue({
@@ -32,11 +396,19 @@ beforeEach(() => {
     settings: defaultSettings,
     errors: [],
     window_name: 'Window 1',
+    file_results: { revision: 0, now_ms: 0, notices: [], history: [] },
     jobs: [],
     check_at_startup: true,
   });
   mocks.listen.mockImplementation(() => Promise.resolve(vi.fn()));
   mocks.checkUpdate.mockResolvedValue(null);
+  mocks.cancel.mockResolvedValue(undefined);
+  mocks.fileResults.mockResolvedValue({
+    revision: 0,
+    now_ms: 0,
+    notices: [],
+    history: [],
+  });
 });
 it('unsubscribes successful listeners when one subscription fails', async () => {
   const stop = vi.fn();
@@ -48,7 +420,7 @@ it('unsubscribes successful listeners when one subscription fails', async () => 
   const app = createSession();
   await app.initialize();
   app.dispose();
-  expect(stop).toHaveBeenCalledTimes(7);
+  expect(stop).toHaveBeenCalledTimes(8);
 });
 it('shares settings changes and consumes asynchronous feedback without extra sounds', async () => {
   const callbacks = new Map<string, (value: unknown) => void>();
@@ -154,6 +526,7 @@ it('does not replace a settings broadcast with an older bootstrap snapshot', asy
     settings: defaultSettings,
     errors: [],
     window_name: 'Window 1',
+    file_results: { revision: 0, now_ms: 0, notices: [], history: [] },
     jobs: [],
     check_at_startup: false,
   });
@@ -167,6 +540,7 @@ it('restores shared progress in a new window without another startup update chec
     settings: defaultSettings,
     errors: [],
     window_name: 'Interview',
+    file_results: { revision: 0, now_ms: 0, notices: [], history: [] },
     check_at_startup: false,
     jobs: [
       {
@@ -319,6 +693,7 @@ it('owns discard results once and ignores generic job completion for that operat
     errors: [],
     jobs: [],
     window_name: '',
+    file_results: { revision: 0, now_ms: 0, notices: [], history: [] },
     check_at_startup: false,
   });
   mocks.discard.mockResolvedValue({
@@ -337,8 +712,29 @@ it('owns discard results once and ignores generic job completion for that operat
     code: 'discard_completed',
   };
   callbacks.get('discard-result')?.(result);
+  const notice = {
+    key: { generation: 3, owner: 'discard', operation_id: 'op-1' },
+    revision: 1,
+    kind: 'delete',
+    outcome: 'completed',
+    code: 'discard_completed',
+    warnings: [],
+    name: 'take.mp4',
+    completed: 1,
+    count: 1,
+    results: [],
+    expires_at_ms: 10_000,
+  };
+  mocks.fileResults.mockResolvedValue({
+    revision: 2,
+    now_ms: 0,
+    notices: [notice],
+    history: [notice],
+  });
+  callbacks.get('file-results-changed')?.({ revision: 2 });
   await Promise.resolve();
-  expect(app.data.result).toBe('discard_completed');
+  expect(app.data.result).toBe('');
+  expect(app.data.fileResults.notices[0].key.operation_id).toBe('op-1');
   expect(mocks.videos).toHaveBeenCalledTimes(1);
   callbacks.get('file-job')?.({
     id: 'delete-1',
@@ -349,7 +745,7 @@ it('owns discard results once and ignores generic job completion for that operat
     results: [],
   });
   callbacks.get('discard-result')?.(result);
-  expect(app.data.result).toBe('discard_completed');
+  expect(app.data.result).toBe('');
   expect(mocks.videos).toHaveBeenCalledTimes(1);
   expect(mocks.sound).not.toHaveBeenCalled();
   app.dispose();
@@ -382,6 +778,7 @@ it('ignores a discard rejection after a newer take replaces its request', async 
     errors: [],
     jobs: [],
     window_name: '',
+    file_results: { revision: 0, now_ms: 0, notices: [], history: [] },
     check_at_startup: false,
   });
   let reject!: (error: Error) => void;

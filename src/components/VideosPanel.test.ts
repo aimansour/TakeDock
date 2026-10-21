@@ -80,6 +80,37 @@ it('keeps unfinished videos discoverable without an actionable checkbox', () => 
   expect(screen.getByText('one.mp4')).toBeInTheDocument();
   expect(screen.queryByRole('checkbox')).toBeNull();
 });
+it('retains the selected focused native checkbox and uses fresh rename metadata', async () => {
+  const user = userEvent.setup();
+  const onJob = vi.fn();
+  const { rerender } = render(VideosPanel, {
+    videos,
+    generation: 3,
+    onJob,
+    onRefresh: vi.fn(),
+  });
+  const checkbox = screen.getByRole('checkbox', { name: 'Select one.mp4' });
+  await user.click(checkbox);
+  const renamed = {
+    ...videos[0],
+    name: 'renamed.mp4',
+    duration_ms: 250,
+    identity: '{"device":1,"inode":1,"size":10,"modified_ns":1,"changed_ns":2}',
+  };
+  await rerender({ videos: [renamed, videos[1]] });
+  expect(screen.getByRole('checkbox', { name: 'Select renamed.mp4' })).toBe(
+    checkbox,
+  );
+  expect(checkbox).toBeChecked();
+  expect(checkbox).toHaveFocus();
+  await user.click(screen.getByRole('button', { name: 'Copy to computer' }));
+  expect(onJob).toHaveBeenLastCalledWith('copy', [renamed], undefined, 3);
+  await rerender({ language: 'ar' });
+  expect(checkbox).toHaveAccessibleName(/renamed\.mp4/);
+  expect(screen.getAllByRole('checkbox')[0]).toBe(checkbox);
+  await rerender({ videos: [{ ...renamed, ready: false }] });
+  expect(screen.queryByRole('checkbox')).toBeNull();
+});
 it('exposes precise container duration as ordinary table text', () => {
   const { container } = render(VideosPanel, {
     videos: [

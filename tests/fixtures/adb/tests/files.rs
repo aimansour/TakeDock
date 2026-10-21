@@ -4,6 +4,7 @@ use std::{
     time::{Duration, Instant},
 };
 use takedock_lib::{
+    file_results::FileResultStore,
     files::{FileService, JobKind, Video},
     model::Settings,
     session::Engine,
@@ -40,6 +41,8 @@ struct Fixture {
     engine: Engine,
     files: FileService,
     events: Arc<Mutex<Vec<serde_json::Value>>>,
+    named_events: Arc<Mutex<Vec<(String, serde_json::Value)>>>,
+    results: Arc<FileResultStore>,
     videos: Vec<Video>,
 }
 impl Fixture {
@@ -63,7 +66,19 @@ impl Fixture {
         }
         let events = Arc::new(Mutex::new(vec![]));
         let output = events.clone();
+        let named_events = Arc::new(Mutex::new(vec![]));
+        let named_output = named_events.clone();
+        let started = Instant::now();
+        let results = Arc::new(FileResultStore::new(Arc::new(move || {
+            u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX)
+        })));
+        let result_output = results.clone();
         let sink: takedock_lib::session::EventSink = Arc::new(move |name, value| {
+            result_output.receive(name, &value);
+            named_output
+                .lock()
+                .unwrap()
+                .push((name.into(), value.clone()));
             if name == "file-job" {
                 output.lock().unwrap().push(value);
             }
@@ -86,6 +101,8 @@ impl Fixture {
             engine,
             files,
             events,
+            named_events,
+            results,
             videos,
         }
     }
@@ -122,12 +139,175 @@ impl Fixture {
     fn original(&self, name: &str) -> std::path::PathBuf {
         self.root.path().join("videos").join(name)
     }
+    fn rename(&self, video: Video) -> String {
+        self.files
+            .start_job(
+                self.engine.lease().unwrap(),
+                JobKind::Rename,
+                vec![video],
+                Path::new("").into(),
+                Some("renamed".into()),
+            )
+            .unwrap()
+    }
 }
 impl Drop for Fixture {
     fn drop(&mut self) {
+        for flag in ["hold-index", "hold-hash", "hold-rename-ack"] {
+            let _ = std::fs::remove_file(self.root.path().join(flag));
+        }
         self.engine.shutdown();
         self.files.shutdown();
     }
+}
+
+#[test]
+fn rename_update_precedes_held_index_and_next_job() {
+    use takedock_lib::model::{RecordingAction, RecordingState};
+    let fixture = Fixture::new(20);
+    let original = fixture.videos[0].clone();
+    std::fs::write(fixture.root.path().join("hold-index"), b"").unwrap();
+    std::fs::write(fixture.root.path().join("hold-hash"), b"").unwrap();
+    let id = fixture.rename(original.clone());
+    wait(|| fixture.root.path().join("index-started").exists());
+    let update = fixture
+        .named_events
+        .lock()
+        .unwrap()
+        .iter()
+        .find(|(event, value)| event == "file-renamed" && value["id"] == id)
+        .map(|(_, value)| value.clone());
+    assert!(
+        update.is_some(),
+        "verified rename update must precede media indexing"
+    );
+    let update = update.unwrap();
+    assert!(update["sequence"].as_u64().unwrap() > 0);
+    assert_eq!(update["source_name"], original.name);
+    assert_eq!(update["source_identity"], original.identity);
+    assert_eq!(update["video"]["name"], "renamed.mp4");
+    let root = takedock_files::Root::open(&fixture.root.path().join("videos")).unwrap();
+    let fresh = root.inspect("renamed.mp4").unwrap();
+    assert_eq!(
+        update["video"]["identity"],
+        serde_json::to_string(&fresh.identity).unwrap()
+    );
+    assert_eq!(update["video"]["duration_ms"], 100);
+    let next = fixture.job(JobKind::Copy, vec![fixture.videos[1].clone()]);
+    assert!(!fixture.root.path().join("hash-started").exists());
+    std::fs::remove_file(fixture.root.path().join("hold-index")).unwrap();
+    wait(|| fixture.root.path().join("hash-started").exists());
+    wait(|| fixture.engine.snapshot().predicted == RecordingState::Idle);
+    fixture.engine.dispatch(RecordingAction::Start).unwrap();
+    fixture.engine.dispatch(RecordingAction::Stop).unwrap();
+    wait(|| {
+        std::fs::read_to_string(fixture.root.path().join("commands.jsonl"))
+            .unwrap_or_default()
+            .lines()
+            .count()
+            == 2
+    });
+    let events = fixture.named_events.lock().unwrap();
+    let rename_position = events
+        .iter()
+        .position(|(name, value)| name == "file-renamed" && value["id"] == id)
+        .unwrap();
+    let next_position = events
+        .iter()
+        .position(|(name, value)| {
+            name == "file-job" && value["id"] == next && value["status"] == "running"
+        })
+        .unwrap();
+    assert!(rename_position < next_position);
+    drop(events);
+    std::fs::remove_file(fixture.root.path().join("hold-hash")).unwrap();
+    assert_eq!(fixture.result(&id)["status"], "completed");
+    assert_eq!(fixture.result(&next)["status"], "completed");
+}
+
+#[test]
+fn committed_rename_inspection_failure_is_warning() {
+    let fixture = Fixture::new(20);
+    let source = fixture.videos[0].clone();
+    let bytes = std::fs::read(fixture.original(&source.name)).unwrap();
+    std::fs::write(fixture.root.path().join("fail-rename-inspect"), b"").unwrap();
+    let id = fixture.rename(source);
+    let result = fixture.result(&id);
+    assert_eq!(result["status"], "completed");
+    assert_eq!(result["results"][0]["destination_name"], "renamed.mp4");
+    assert_eq!(
+        std::fs::read(fixture.original("renamed.mp4")).unwrap(),
+        bytes
+    );
+    let events = fixture.named_events.lock().unwrap();
+    assert!(
+        events
+            .iter()
+            .any(|(name, value)| name == "file-metadata-warning"
+                && value["id"] == id
+                && value["code"] == "rename_refresh_pending")
+    );
+    assert!(
+        !events
+            .iter()
+            .any(|(name, value)| name == "file-renamed" && value["id"] == id)
+    );
+}
+
+#[test]
+fn late_cancel_after_rename_ack_keeps_completed() {
+    for disconnect in [false, true] {
+        let fixture = Fixture::new(20);
+        std::fs::write(fixture.root.path().join("hold-index"), b"").unwrap();
+        let id = fixture.rename(fixture.videos[0].clone());
+        wait(|| fixture.root.path().join("index-started").exists());
+        if disconnect {
+            fixture.engine.shutdown();
+        } else {
+            fixture.files.cancel(&id).unwrap();
+        }
+        std::fs::remove_file(fixture.root.path().join("hold-index")).unwrap();
+        let result = fixture.result(&id);
+        assert_eq!(result["status"], "completed");
+        assert_eq!(result["results"][0]["destination_name"], "renamed.mp4");
+        assert!(fixture.original("renamed.mp4").exists());
+        let snapshot = fixture.results.snapshot();
+        let notice = snapshot
+            .history
+            .iter()
+            .find(|notice| notice.key.operation_id == id)
+            .expect("Committed rename must remain in shared history after disconnect");
+        assert_eq!(
+            notice.results[0].destination_name.as_deref(),
+            Some("renamed.mp4")
+        );
+        assert_eq!(notice.completed, 1);
+        assert_eq!(
+            notice.key.generation,
+            result["generation"].as_u64().unwrap()
+        );
+    }
+}
+
+#[test]
+fn unacknowledged_rename_never_patches_rows() {
+    let fixture = Fixture::new(20);
+    std::fs::write(fixture.root.path().join("hold-rename-ack"), b"").unwrap();
+    let id = fixture.rename(fixture.videos[0].clone());
+    wait(|| fixture.root.path().join("rename-acknowledged").exists());
+    fixture.files.cancel(&id).unwrap();
+    let result = fixture.result(&id);
+    assert_eq!(result["status"], "cancelled");
+    assert!(result["results"][0]["destination_name"].is_null());
+    assert!(fixture.original("renamed.mp4").exists()); // mutation may commit before lost ack
+    assert!(
+        !fixture
+            .named_events
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|(name, value)| name == "file-renamed" && value["id"] == id)
+    );
 }
 #[test]
 fn batch_copy_publishes_exact_bytes_and_move_deletes_only_after_verification() {
@@ -270,6 +450,51 @@ fn rename_requires_one_selection_and_never_overwrites() {
     assert_eq!(fixture.result(&id)["status"], "completed");
     assert!(!fixture.original(&video.name).exists());
     assert!(fixture.original("renamed.mp4").exists());
+}
+#[test]
+fn legacy_exec_success_is_not_remote_rename_acknowledgement() {
+    let fixture = Fixture::new(20);
+    let video = fixture
+        .videos
+        .iter()
+        .find(|video| video.name == "a'b.mp4")
+        .unwrap()
+        .clone();
+    let source_bytes = std::fs::read(fixture.original(&video.name)).unwrap();
+    let destination_bytes = std::fs::read(fixture.original("رحلة.mp4")).unwrap();
+    let id = fixture
+        .files
+        .start_job(
+            fixture.engine.lease().unwrap(),
+            JobKind::Rename,
+            vec![video.clone()],
+            Path::new("").into(),
+            Some("رحلة".into()),
+        )
+        .unwrap();
+    let result = fixture.result(&id);
+    assert_eq!(
+        result["status"], "failed",
+        "local exec-out exit 0 cannot acknowledge a remote failure"
+    );
+    assert!(result["results"][0]["destination_name"].is_null());
+    assert_eq!(result["results"][0]["requested_name"], "رحلة.mp4");
+    assert_eq!(
+        std::fs::read(fixture.original(&video.name)).unwrap(),
+        source_bytes
+    );
+    assert_eq!(
+        std::fs::read(fixture.original("رحلة.mp4")).unwrap(),
+        destination_bytes
+    );
+    assert!(
+        !fixture
+            .named_events
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|(name, value)| name == "file-renamed" && value["id"] == id)
+    );
 }
 #[test]
 fn cancellation_interrupts_hash_verification_while_capture_dispatch_stays_available() {

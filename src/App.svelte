@@ -5,6 +5,7 @@
   import SettingsPanel from './components/SettingsPanel.svelte';
   import UpdatePanel from './components/UpdatePanel.svelte';
   import ActivityPanel from './components/ActivityPanel.svelte';
+  import FileResultsPanel from './components/FileResultsPanel.svelte';
   import WindowPanel from './components/WindowPanel.svelte';
   import { createSession } from './lib/session.svelte';
   import { ipc } from './lib/ipc';
@@ -112,31 +113,15 @@
     </section>{/if}
   <ActivityPanel
     jobs={data.jobs}
+    notices={data.fileResults.notices}
+    onCancel={app.cancel}
     loading={data.loading}
     language={data.settings.language}
   />
-  {#if data.jobs.length}<section class="panel">
-      <h2>{t(data.settings.language, 'jobs')}</h2>
-      {#each data.jobs as job (job.id)}<article class="job">
-          <h3>
-            {t(data.settings.language, job.kind)} · {job.completed}/{job.count}
-          </h3>
-          <p>{t(data.settings.language, job.status)} · <bdi>{job.name}</bdi></p>
-          {#if job.status === 'running'}<p>
-              {(job.bytes / 1048576).toFixed(1)} MB
-            </p>{/if}{#if ['running', 'queued'].includes(job.status)}<button
-              onclick={() => app.cancel(job.id)}
-              >{t(data.settings.language, 'cancel')}</button
-            >{/if}{#if job.results.length}<ul>
-              {#each job.results as result}<li>
-                  <bdi>{result.name}</bdi>: {t(
-                    data.settings.language,
-                    result.status,
-                  )}{result.message
-                    ? ` — ${t(data.settings.language, result.message)}`
-                    : ''}
-                </li>{/each}
-            </ul>{/if}
-        </article>{/each}
-    </section>{/if}
+  <FileResultsPanel
+    notices={data.fileResults.notices}
+    history={data.fileResults.history}
+    language={data.settings.language}
+    onHide={app.hideFileResult}
+  />
 </main>

@@ -56,6 +56,8 @@ pub(crate) fn run(helper: &mut HelperClient, mut job: DiscardJob, sink: &EventSi
         name: job.video.name.clone(),
         status: status.into(),
         message: code.into(),
+        requested_name: None,
+        destination_name: None,
     });
     let deleted = matches!(outcome, DeleteOutcome::Deleted);
     // The acknowledged mutation owns its terminal result now. Best-effort

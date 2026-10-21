@@ -10,6 +10,8 @@ import type {
   JobEvent,
   TakeToken,
   DiscardReceipt,
+  FileResultSnapshot,
+  ResultKey,
 } from './types';
 import type { UpdateInfo } from './updater';
 export const ipc = {
@@ -20,8 +22,12 @@ export const ipc = {
       errors: string[];
       window_name: string;
       jobs: JobEvent[];
+      file_results: FileResultSnapshot;
       check_at_startup: boolean;
     }>('bootstrap'),
+  fileResults: () => invoke<FileResultSnapshot>('file_results'),
+  acknowledgeFileResult: (key: ResultKey, revision: number) =>
+    invoke<FileResultSnapshot>('acknowledge_file_result', { key, revision }),
   newWindow: () => invoke<void>('new_window'),
   renameWindow: (name: string) => invoke<string>('rename_window', { name }),
   recording: (action: string, generation: number) =>

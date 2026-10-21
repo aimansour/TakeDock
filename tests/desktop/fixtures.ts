@@ -9,6 +9,25 @@ import {
 import { join } from 'node:path';
 import { randomUUID, createHash } from 'node:crypto';
 import { browser, $ } from '@wdio/globals';
+import type { Video } from '../../src/lib/types';
+
+export async function listedVideos(): Promise<Video[]> {
+  return browser.execute(async () => {
+    const api = (
+      window as unknown as {
+        __TAURI_INTERNALS__: {
+          invoke: (command: string, args?: unknown) => Promise<unknown>;
+        };
+      }
+    ).__TAURI_INTERNALS__;
+    const initial = (await api.invoke('bootstrap')) as {
+      session: { generation: number };
+    };
+    return (await api.invoke('list_videos', {
+      generation: initial.session.generation,
+    })) as Video[];
+  });
+}
 
 export let fixtureRoot = '';
 export const settingsPath = process.env.TAKEDOCK_SETTINGS_FILE!;
@@ -98,6 +117,20 @@ export function deleteCalls() {
 }
 export const button = (name: string) =>
   $(`//button[normalize-space(.)=${JSON.stringify(name)}]`);
+export async function fileResults() {
+  return browser.execute(async () => {
+    const api = (
+      window as unknown as {
+        __TAURI_INTERNALS__: {
+          invoke: (
+            command: string,
+          ) => Promise<import('../../src/lib/types').FileResultSnapshot>;
+        };
+      }
+    ).__TAURI_INTERNALS__;
+    return api.invoke('file_results');
+  });
+}
 export async function shortcut(key: string) {
   await browser.keys(['Control', 'Shift', key, 'NULL']);
 }

@@ -18,6 +18,8 @@ import {
   settingsPath,
   waitForBaseline,
   deleteCalls,
+  listedVideos,
+  fileResults,
 } from './fixtures';
 
 describe('TakeDock release desktop acceptance', () => {
@@ -43,6 +45,10 @@ describe('TakeDock release desktop acceptance', () => {
       0,
     );
     assert.equal(await button('Install update').isExisting(), false);
+    assert.equal(
+      await $('.file-results-panel details').getAttribute('open'),
+      null,
+    );
     const first = await browser.getWindowHandle();
     await $('#window-name').setValue('Interview');
     await button('Save window name').click();
@@ -309,6 +315,51 @@ describe('TakeDock release desktop acceptance', () => {
         (await $('#activity-progress').getAttribute('value')) === '100',
     );
     assert.equal(await $('#activity-progress').getAttribute('value'), '100');
+    const history = await $('.file-results-panel details');
+    await history.waitForExist();
+    assert.equal(await history.getAttribute('open'), null);
+    const originalWindow = await browser.getWindowHandle();
+    const shared = (await fileResults()).notices.find(
+      (notice) => notice.kind === 'copy',
+    );
+    assert.ok(shared?.expires_at_ms);
+    await shortcut('n');
+    await waitFor(async () => (await browser.getWindowHandles()).length === 2);
+    const otherWindow = (await browser.getWindowHandles()).find(
+      (handle) => handle !== originalWindow,
+    )!;
+    await browser.switchToWindow(otherWindow);
+    await $('.file-results-panel').waitForExist();
+    const mirrored = (await fileResults()).notices.find(
+      (notice) => notice.key.operation_id === shared.key.operation_id,
+    );
+    assert.equal(mirrored?.expires_at_ms, shared.expires_at_ms);
+    await waitFor(async () => (await $$('.file-result-notice')).length === 0);
+    await browser.closeWindow();
+    await browser.switchToWindow(originalWindow);
+    await waitFor(
+      async () => (await $('#activity-progress').getAttribute('value')) === '0',
+    );
+    assert.match(await $('.activity-panel').getText(), /Ready/);
+    assert.equal((await $$('.file-result-notice')).length, 0);
+    await $('.file-results-panel summary').click();
+    await shortcut('n');
+    await waitFor(async () => (await browser.getWindowHandles()).length === 2);
+    await browser.switchToWindow(
+      (await browser.getWindowHandles()).find(
+        (handle) => handle !== originalWindow,
+      )!,
+    );
+    await $('.file-results-panel').waitForExist();
+    assert.equal((await $$('.file-result-notice')).length, 0);
+    assert.equal(
+      await $('.file-results-panel details').getAttribute('open'),
+      null,
+    );
+    await browser.closeWindow();
+    await browser.switchToWindow(originalWindow);
+    assert.match(await history.getText(), /2\/2/);
+    await $('.file-results-panel summary').click();
     assert.equal(deleteCalls().length, 0);
     assert.equal(
       existsSync(join(fixtureRoot, 'videos', 'take-0001.mp4')),
@@ -364,6 +415,195 @@ describe('TakeDock release desktop acceptance', () => {
       hash(join(fixtureRoot, 'destination', 'take-0001.mp4')),
       hash(join(fixtureRoot, 'videos', 'take-0001.mp4')),
     );
+    await shortcut('v');
+    const initialVideo = (await listedVideos()).find(
+      (video) => video.name === 'رحلة.mp4',
+    );
+    assert.ok(initialVideo);
+    const sourceBox = await $(
+      '//label[span[normalize-space(.)="Select رحلة.mp4"]]/input',
+    );
+    await sourceBox.waitForExist();
+    if (await button('Clear selection').isExisting())
+      await button('Clear selection').click();
+    await sourceBox.click();
+    const originalElementId = sourceBox.elementId;
+    if (existsSync(join(fixtureRoot, 'index-started')))
+      unlinkSync(join(fixtureRoot, 'index-started'));
+    if (existsSync(join(fixtureRoot, 'hash-started')))
+      unlinkSync(join(fixtureRoot, 'hash-started'));
+    flag('hold-hash');
+    flag('hold-index');
+    try {
+      await button('Rename video').click();
+      await $('#new-name').setValue('renamed-رحلة');
+      await button('Save name').click();
+      await waitFor(() => existsSync(join(fixtureRoot, 'index-started')));
+      await browser.waitUntil(
+        async () =>
+          (await sourceBox.getComputedLabel()) === 'Select renamed-رحلة.mp4',
+        {
+          timeout: 1000,
+          interval: 50,
+          timeoutMsg:
+            'Confirmed rename did not reach the native label while indexing held the worker',
+        },
+      );
+      const renamedBox = await $(
+        '//label[span[normalize-space(.)="Select renamed-رحلة.mp4"]]/input',
+      );
+      assert.equal(renamedBox.elementId, originalElementId);
+      assert.equal(await renamedBox.isSelected(), true);
+      await button('Copy to computer').click();
+      await browser.execute(
+        (element: HTMLElement) => element.focus(),
+        renamedBox,
+      );
+      assert.equal(existsSync(join(fixtureRoot, 'hold-index')), true);
+      assert.equal(
+        (await $$('[aria-live], [role="status"], [role="alert"]')).length,
+        0,
+      );
+    } finally {
+      if (existsSync(join(fixtureRoot, 'hold-index')))
+        unlinkSync(join(fixtureRoot, 'hold-index'));
+    }
+    await waitFor(() => existsSync(join(fixtureRoot, 'hash-started')));
+    try {
+      await button('Recording').click();
+      await button('Start video').click();
+      await waitFor(() => commands().length === 7);
+      await button('Stop').click();
+      await waitFor(() => commands().length === 8);
+      await shortcut('v');
+      const checkbox = await $(
+        '//label[span[normalize-space(.)="Select renamed-رحلة.mp4"]]/input',
+      );
+      await checkbox.waitForExist();
+      if (!(await checkbox.isSelected())) await checkbox.click();
+      await browser.execute(
+        (element: HTMLElement) => element.focus(),
+        checkbox,
+      );
+    } finally {
+      if (existsSync(join(fixtureRoot, 'hold-hash')))
+        unlinkSync(join(fixtureRoot, 'hold-hash'));
+    }
+    await waitFor(() =>
+      existsSync(join(fixtureRoot, 'destination', 'renamed-رحلة.mp4')),
+    );
+    await waitFor(async () =>
+      (await fileResults()).history.some(
+        (notice) =>
+          notice.kind === 'copy' &&
+          notice.name === 'renamed-رحلة.mp4' &&
+          notice.outcome === 'completed',
+      ),
+    );
+    assert.equal(
+      await browser.execute(() => document.activeElement?.getAttribute('type')),
+      'checkbox',
+    );
+    assert.equal(
+      hash(join(fixtureRoot, 'destination', 'renamed-رحلة.mp4')),
+      hash(join(fixtureRoot, 'videos', 'renamed-رحلة.mp4')),
+    );
+    const renamed = (await listedVideos()).find(
+      (video) => video.name === 'renamed-رحلة.mp4',
+    );
+    assert.ok(renamed);
+    for (const part of ['device', 'inode']) {
+      const exact = new RegExp(`"${part}":(\\d+)`);
+      assert.equal(
+        renamed.identity.match(exact)?.[1],
+        initialVideo.identity.match(exact)?.[1],
+      );
+    }
+    await button('Copy to computer').click();
+    await waitFor(async () =>
+      (await fileResults()).notices.some(
+        (notice) =>
+          notice.outcome === 'failed' && notice.name === 'renamed-رحلة.mp4',
+      ),
+    );
+    const failure = (await fileResults()).notices.find(
+      (notice) =>
+        notice.outcome === 'failed' && notice.name === 'renamed-رحلة.mp4',
+    )!;
+    const failureWindow = await browser.getWindowHandle();
+    await shortcut('n');
+    await waitFor(async () => (await browser.getWindowHandles()).length === 2);
+    const observerWindow = (await browser.getWindowHandles()).find(
+      (handle) => handle !== failureWindow,
+    )!;
+    await browser.switchToWindow(observerWindow);
+    const failureCard = () =>
+      $(`article[data-operation-id="${failure.key.operation_id}"]`);
+    await failureCard().waitForExist();
+    const protectedHide = await failureCard().$('button');
+    await browser.execute(
+      (element: HTMLElement) => element.focus(),
+      protectedHide,
+    );
+    assert.equal(
+      await browser.execute(
+        (element: HTMLElement) => document.activeElement === element,
+        protectedHide,
+      ),
+      true,
+      'The observer window must establish focus before later results arrive',
+    );
+    await browser.switchToWindow(failureWindow);
+    await button('Rename video').click();
+    await $('#new-name').setValue('final-رحلة');
+    await button('Save name').click();
+    await waitFor(async () =>
+      (await fileResults()).notices.some(
+        (notice) =>
+          notice.kind === 'rename' &&
+          notice.outcome === 'completed' &&
+          notice.results.some(
+            (item) => item.destination_name === 'final-رحلة.mp4',
+          ),
+      ),
+    );
+    await waitFor(
+      async () =>
+        !(await fileResults()).notices.some(
+          (notice) => notice.expires_at_ms != null,
+        ),
+    );
+    assert.equal(await failureCard().isExisting(), true);
+    await browser.switchToWindow(observerWindow);
+    assert.equal(
+      await browser.execute(
+        (element: HTMLElement) => document.activeElement === element,
+        protectedHide,
+      ),
+      true,
+      'New results and passive expiry must preserve the observer focus',
+    );
+    await browser.switchToWindow(failureWindow);
+    await failureCard().$('button').click();
+    await waitFor(
+      async () =>
+        !(await fileResults()).notices.some(
+          (notice) => notice.key.operation_id === failure.key.operation_id,
+        ),
+    );
+    await browser.switchToWindow(observerWindow);
+    assert.equal(
+      (await failureCard().$('button')).elementId,
+      protectedHide.elementId,
+    );
+    await browser.execute(() =>
+      document
+        .querySelector<HTMLElement>('.file-results-panel summary')
+        ?.focus(),
+    );
+    await waitFor(async () => !(await failureCard().isExisting()));
+    await browser.closeWindow();
+    await browser.switchToWindow(failureWindow);
   });
   it('persists Arabic, destination and optional success sound across application restart', async () => {
     await restartFixture(false);
@@ -393,5 +633,9 @@ describe('TakeDock release desktop acceptance', () => {
     assert.equal(await $('#destination').getValue(), saved.destination);
     assert.equal(await $('html').getAttribute('dir'), 'rtl');
     assert.equal(await button('تثبيت التحديث').isExisting(), false);
+    assert.equal(
+      await $('.file-results-panel summary').getText(),
+      'سجل العمليات',
+    );
   });
 });

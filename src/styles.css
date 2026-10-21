@@ -225,6 +225,15 @@ fieldset input {
   border-top: 1px solid #3b4e5f;
   padding-block: 1rem;
 }
+.file-history summary {
+  cursor: pointer;
+  padding-block: 0.7rem;
+  font-weight: 600;
+}
+.file-result-notice p,
+.file-history p {
+  overflow-wrap: anywhere;
+}
 .sr-only {
   position: absolute;
   width: 1px;

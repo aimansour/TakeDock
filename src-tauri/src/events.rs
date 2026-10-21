@@ -1,11 +1,12 @@
 use serde_json::Value;
-use std::collections::VecDeque;
+use std::collections::{HashSet, VecDeque};
 
 #[derive(Default)]
 pub struct Events {
     pub jobs: Vec<Value>,
     generation: u64,
     sounded: VecDeque<String>,
+    terminal_jobs: HashSet<String>,
 }
 impl Events {
     pub fn receive(&mut self, event: &str, value: &Value) -> Option<bool> {
@@ -17,6 +18,7 @@ impl Events {
             if generation != self.generation {
                 self.jobs.clear();
                 self.sounded.clear();
+                self.terminal_jobs.clear();
             }
             self.generation = generation;
             return None;
@@ -28,6 +30,12 @@ impl Events {
         let (key, success) = match event {
             "file-job" => {
                 let id = value["id"].as_str()?;
+                if matches!(status, "queued" | "running") && self.terminal_jobs.contains(id) {
+                    return None;
+                }
+                if matches!(status, "completed" | "failed" | "cancelled") {
+                    self.terminal_jobs.insert(id.to_owned());
+                }
                 if let Some(index) = self.jobs.iter().position(|job| job["id"] == id) {
                     let previous = self.jobs[index]["status"].as_str().unwrap_or("");
                     if (status == "queued" && previous != "queued")
@@ -39,8 +47,16 @@ impl Events {
                     self.jobs[index] = value.clone();
                 } else {
                     self.jobs.insert(0, value.clone());
-                    self.jobs.truncate(20);
                 }
+                let mut terminal = 0;
+                self.jobs.retain(|job| {
+                    if matches!(job["status"].as_str(), Some("queued" | "running")) {
+                        true
+                    } else {
+                        terminal += 1;
+                        terminal <= 20
+                    }
+                });
                 if value["discard_operation_id"].is_string() {
                     return None;
                 }
@@ -94,6 +110,45 @@ impl Events {
 mod tests {
     use super::*;
     use serde_json::json;
+    #[test]
+    fn active_jobs_survive_twenty_terminals() {
+        let mut events = Events::default();
+        events.receive("session-state", &json!({"generation":7}));
+        events.receive(
+            "file-job",
+            &json!({"generation":7,"id":"held","status":"running"}),
+        );
+        for i in 0..25 {
+            events.receive(
+                "file-job",
+                &json!({"generation":7,"id":format!("done-{i}"),"status":"completed"}),
+            );
+        }
+        assert!(events.jobs.iter().any(|job| job["id"] == "held"));
+        assert_eq!(events.jobs.len(), 21);
+    }
+    #[test]
+    fn late_queued_publication_cannot_revive_evicted_terminal_job() {
+        let mut events = Events::default();
+        events.receive("session-state", &json!({"generation":7}));
+        events.receive(
+            "file-job",
+            &json!({"generation":7,"id":"first","status":"completed"}),
+        );
+        for i in 0..25 {
+            events.receive(
+                "file-job",
+                &json!({"generation":7,"id":format!("later-{i}"),"status":"completed"}),
+            );
+        }
+        // enqueue hands work to the worker before publishing its queued event.
+        // A delayed producer can therefore publish queued after completion.
+        events.receive(
+            "file-job",
+            &json!({"generation":7,"id":"first","status":"queued"}),
+        );
+        assert!(!events.jobs.iter().any(|job| job["id"] == "first"));
+    }
     #[test]
     fn older_session_state_cannot_restore_a_discard_feedback_generation() {
         let mut events = Events::default();

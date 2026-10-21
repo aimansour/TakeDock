@@ -308,8 +308,9 @@ fn main() {
                 std::process::exit(2)
             }
             if let Err(error) = file_command(&root, &args[1..]) {
-                eprintln!("{error}");
-                std::process::exit(1)
+                // Legacy exec transport merges remote output and does not
+                // report the remote exit code. Only shell -T does that.
+                println!("{error}");
             }
         }
         _ => {
@@ -324,6 +325,14 @@ fn file_command(root: &Path, args: &[String]) -> Result<(), String> {
     match borrowed.as_slice() {
         ["watch", stream] => return watch_files(root, &videos, stream),
         ["inspect", name] => {
+            if root.join("fail-rename-inspect").exists()
+                && fs::read_to_string(root.join("rename-acknowledged"))
+                    .ok()
+                    .as_deref()
+                    == Some(name)
+            {
+                return Err("fixture_rename_inspection_failure".into());
+            }
             println!("{}", serde_json::to_string(&videos.inspect(name)?).unwrap());
             return Ok(());
         }
@@ -422,6 +431,10 @@ fn file_command(root: &Path, args: &[String]) -> Result<(), String> {
                 new_name,
                 &serde_json::from_str(expected).map_err(|e| e.to_string())?,
             )?;
+            fs::write(root.join("rename-acknowledged"), new_name).map_err(|e| e.to_string())?;
+            while root.join("hold-rename-ack").exists() {
+                thread::sleep(Duration::from_millis(10));
+            }
         }
         _ => return Err("invalid_fixture_helper_command".into()),
     }

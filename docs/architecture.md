@@ -58,3 +58,27 @@ CI runs a separate fake ADB process against the actual release EXE, WebView2 and
 Rust IPC. It does not inject test behavior into the product. Four mandatory cases
 feed package hash verification. Publishing requires every job successful, matching
 versions, persistent signing identities, package hashes and verified uploaded bytes.
+
+File result presentation has one process-owned model and monotonic clock,
+independent of the capture queue and serialized file worker. A first clean
+terminal result owns a shared ten-second deadline. Windows read snapshots and
+acknowledge a particular outcome revision; neither action replays result sound
+or dispatches file/capture work. Failures, retained/unknown outcomes and warnings
+persist until acknowledged. A later warning supersedes an earlier acknowledgement.
+All active jobs survive retention; history retains twenty ordinary terminal
+records plus unacknowledged unsuccessful outcomes for the process lifetime.
+
+Each window projects that deadline using its monotonic clock and rejects stale
+snapshot revisions. Native closed history keeps details after success expiry;
+opening history pins displayed records until it closes. A card containing
+keyboard focus stays locally until focus leaves. Passive expiry and another
+window's acknowledgement never actively move focus.
+
+After the helper acknowledges a rename, read-only inspection validates the
+destination's exact device/inode and supplies the complete fresh Video before
+media indexing or the next queued job. Inspection failure produces a persistent
+metadata warning while preserving the acknowledged mutation outcome. A worker
+execution sequence orders reversed rename links, including same-identity name
+cycles on Windows. Frontend reconciliation requires the exact source name and
+opaque identity and invalidates older listings; the exact inode DOM key preserves
+the selected checkbox while subsequent actions receive the fresh full identity.

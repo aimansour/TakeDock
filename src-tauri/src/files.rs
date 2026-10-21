@@ -82,19 +82,7 @@ pub fn parse_listing(bytes: &[u8]) -> Result<Vec<Video>, String> {
             continue;
         }
         let modified_ns = entry.identity.modified_ns;
-        videos.push((
-            modified_ns,
-            Video {
-                name: name.into(),
-                size: entry.identity.size,
-                modified_ms: (entry.identity.modified_ns / 1_000_000)
-                    .try_into()
-                    .map_err(err)?,
-                ready: entry.ready,
-                duration_ms: entry.duration_ms,
-                identity: serde_json::to_string(&entry.identity).map_err(err)?,
-            },
-        ));
+        videos.push((modified_ns, video_from_entry(entry)?));
     }
     videos.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| a.1.name.cmp(&b.1.name)));
     Ok(videos.into_iter().map(|(_, video)| video).collect())
@@ -108,6 +96,33 @@ pub struct Video {
     #[serde(default)]
     pub duration_ms: Option<u64>,
     pub identity: String,
+}
+pub fn confirmed_rename_video(
+    source: &Video,
+    destination_name: &str,
+    entry: Entry,
+) -> Result<Video, String> {
+    takedock_files::validate_name(destination_name)?;
+    let original: Identity = serde_json::from_str(&source.identity).map_err(err)?;
+    if entry.name != destination_name
+        || entry.identity.device != original.device
+        || entry.identity.inode != original.inode
+    {
+        return Err("source_changed".into());
+    }
+    video_from_entry(entry)
+}
+fn video_from_entry(entry: Entry) -> Result<Video, String> {
+    Ok(Video {
+        name: entry.name,
+        size: entry.identity.size,
+        modified_ms: (entry.identity.modified_ns / 1_000_000)
+            .try_into()
+            .map_err(err)?,
+        ready: entry.ready,
+        duration_ms: entry.duration_ms,
+        identity: serde_json::to_string(&entry.identity).map_err(err)?,
+    })
 }
 fn err(error: impl std::fmt::Display) -> String {
     error.to_string()
@@ -143,6 +158,17 @@ pub struct FileResult {
     pub name: String,
     pub status: String,
     pub message: String,
+    pub requested_name: Option<String>,
+    pub destination_name: Option<String>,
+}
+#[derive(Clone, Debug, Serialize)]
+pub struct RenameUpdate {
+    pub generation: u64,
+    pub id: String,
+    pub sequence: u64,
+    pub source_name: String,
+    pub source_identity: String,
+    pub video: Video,
 }
 struct Job {
     event: JobEvent,
@@ -249,6 +275,7 @@ impl FileService {
         let worker = thread::spawn(move || {
             let sink = worker_sink;
             let mut remote = Remote::new(resources);
+            let mut sequence = 0_u64;
             for message in receiver {
                 match message {
                     Message::Discard(job) => {
@@ -264,11 +291,12 @@ impl FileService {
                         let _ = reply.send(result);
                     }
                     Message::Job(mut job) => {
+                        sequence += 1;
                         job.event.status = "running".into();
                         emit(&sink, &job.event);
                         let result = remote
                             .prepare(&job.lease)
-                            .and_then(|_| execute(&remote, &mut job, &sink));
+                            .and_then(|_| execute(&remote, &mut job, &sink, sequence));
                         job.event.status = if result.is_ok() {
                             "completed"
                         } else if job.cancel.load(Ordering::Acquire) {
@@ -283,6 +311,8 @@ impl FileService {
                                 name: video.name.clone(),
                                 status: "skipped".into(),
                                 message: job.event.message.clone(),
+                                requested_name: None,
+                                destination_name: None,
                             });
                         }
                         emit(&sink, &job.event);
@@ -417,9 +447,11 @@ type Remote = crate::helper::HelperClient;
 impl Remote {
     fn job_output(&self, job: &Job, args: &[&str], timeout: u64) -> Result<Vec<u8>, String> {
         check(job)?;
+        // Mutation acknowledgement requires shell-v2's remote exit status.
+        // Legacy exec-out can exit 0 even when the helper rejected the operation.
         job.lease.adb.output_with_cancellation(
             &job.lease.serial,
-            &["exec-out", &self.command(args)?],
+            &["shell", "-T", &self.command(args)?],
             timeout,
             &[&job.lease.cancelled, &job.cancel],
         )
@@ -451,7 +483,7 @@ pub(crate) fn hash_path(path: &Path) -> Result<String, String> {
         .map(|byte| format!("{byte:02x}"))
         .collect())
 }
-fn execute(remote: &Remote, job: &mut Job, sink: &EventSink) -> Result<(), String> {
+fn execute(remote: &Remote, job: &mut Job, sink: &EventSink, sequence: u64) -> Result<(), String> {
     let mut failure = None;
     for video in job.videos.clone() {
         if check(job).is_err() {
@@ -459,9 +491,17 @@ fn execute(remote: &Remote, job: &mut Job, sink: &EventSink) -> Result<(), Strin
                 name: video.name.clone(),
                 status: "cancelled".into(),
                 message: "operation_cancelled".into(),
+                requested_name: None,
+                destination_name: None,
             });
             return Err("operation_cancelled".into());
         }
+        let requested_name = if job.event.kind == JobKind::Rename {
+            Some(renamed(&video.name, job.new_stem.as_deref().unwrap())?)
+        } else {
+            None
+        };
+        let mut destination_name = None;
         let result = (|| -> Result<(), String> {
             check(job)?;
             job.event.name = video.name.clone();
@@ -530,13 +570,38 @@ fn execute(remote: &Remote, job: &mut Job, sink: &EventSink) -> Result<(), Strin
                     remote.job_output(job, &["delete", &video.name, &video.identity], 30_000)?;
                 }
                 JobKind::Rename => {
-                    let new_name = renamed(&video.name, job.new_stem.as_deref().unwrap())?;
+                    let new_name = requested_name.as_deref().unwrap();
                     check(job)?;
                     remote.job_output(
                         job,
-                        &["rename", &video.name, &new_name, &video.identity],
+                        &["rename", &video.name, new_name, &video.identity],
                         30_000,
                     )?;
+                    destination_name = Some(new_name.to_owned());
+                    let confirmed = remote
+                        .output(&job.lease, &["inspect", new_name], 5_000)
+                        .and_then(|bytes| serde_json::from_slice::<Entry>(&bytes).map_err(err))
+                        .and_then(|entry| confirmed_rename_video(&video, new_name, entry));
+                    match confirmed {
+                        Ok(renamed_video) => (sink)(
+                            "file-renamed",
+                            serde_json::to_value(RenameUpdate {
+                                generation: job.lease.generation,
+                                id: job.event.id.clone(),
+                                sequence,
+                                source_name: video.name.clone(),
+                                source_identity: video.identity.clone(),
+                                video: renamed_video,
+                            })
+                            .expect("rename update serialization"),
+                        ),
+                        Err(_) => (sink)(
+                            "file-metadata-warning",
+                            serde_json::json!({
+                                "generation":job.lease.generation,"id":job.event.id,"code":"rename_refresh_pending"
+                            }),
+                        ),
+                    }
                 }
             }
             if job.event.kind != JobKind::Copy {
@@ -598,6 +663,8 @@ fn execute(remote: &Remote, job: &mut Job, sink: &EventSink) -> Result<(), Strin
             name: video.name.clone(),
             status: status.into(),
             message,
+            requested_name,
+            destination_name,
         });
         emit(sink, &job.event);
     }
@@ -706,6 +773,64 @@ fn stream(
 #[cfg(test)]
 mod tests {
     use super::*;
+    fn rename_fixture() -> (Video, Entry) {
+        let identity = Identity {
+            device: 9_007_199_254_740_993,
+            inode: 9_007_199_254_740_995,
+            size: 7,
+            modified_ns: 1_700_000_000_123_456_789,
+            changed_ns: 1_700_000_000_123_456_790,
+        };
+        let source = Video {
+            name: "old.MP4".into(),
+            size: 7,
+            modified_ms: 1_700_000_000_123,
+            ready: true,
+            duration_ms: Some(100),
+            identity: serde_json::to_string(&identity).unwrap(),
+        };
+        let mut destination = Entry {
+            name: "رحلة'a.MP4".into(),
+            identity,
+            ready: true,
+            duration_ms: Some(300),
+        };
+        destination.identity.changed_ns += 1;
+        (source, destination)
+    }
+    #[test]
+    fn confirmed_rename_requires_expected_name_and_inode() {
+        let (source, entry) = rename_fixture();
+        assert!(confirmed_rename_video(&source, "رحلة'a.MP4", entry.clone()).is_ok());
+        for mismatch in ["name", "device", "inode"] {
+            let mut wrong = entry.clone();
+            match mismatch {
+                "name" => wrong.name = "different.MP4".into(),
+                "device" => wrong.identity.device += 1,
+                _ => wrong.identity.inode += 1,
+            }
+            assert!(confirmed_rename_video(&source, "رحلة'a.MP4", wrong).is_err());
+        }
+        assert!(confirmed_rename_video(&source, "../escape.MP4", entry).is_err());
+    }
+    #[test]
+    fn confirmed_rename_preserves_exact_large_identity() {
+        let (source, entry) = rename_fixture();
+        let video = confirmed_rename_video(&source, "رحلة'a.MP4", entry).unwrap();
+        assert_eq!(video.name, "رحلة'a.MP4");
+        assert_eq!(video.size, 7);
+        assert_eq!(video.modified_ms, 1_700_000_000_123);
+        assert_eq!(video.duration_ms, Some(300));
+        assert!(video.ready);
+        assert_ne!(video.identity, source.identity);
+        assert!(video.identity.contains("\"device\":9007199254740993"));
+        assert!(video.identity.contains("\"inode\":9007199254740995"));
+        assert!(
+            video
+                .identity
+                .contains("\"changed_ns\":1700000000123456791")
+        );
+    }
     #[test]
     fn remote_arguments_quote_apostrophes_unicode_and_newlines() {
         assert_eq!(
