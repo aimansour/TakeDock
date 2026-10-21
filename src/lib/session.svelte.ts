@@ -251,9 +251,14 @@ export function createSession() {
         )
           terminalJobs.add(job.id);
       }
-      const existing = new Set(data.jobs.map((job) => job.id));
+      const currentJobs = data.jobs.filter(
+        (job) =>
+          !['queued', 'running'].includes(job.status) ||
+          !terminalJobs.has(job.id),
+      );
+      const existing = new Set(currentJobs.map((job) => job.id));
       data.jobs = retainJobs([
-        ...data.jobs,
+        ...currentJobs,
         ...initial.jobs
           .filter(
             (job) =>

@@ -148,6 +148,46 @@ it('does not revive evicted terminal work from a delayed bootstrap', async () =>
   app.dispose();
 });
 
+it('reconciles a bootstrap terminal result over an earlier queued event', async () => {
+  const initial = await mocks.bootstrap();
+  const callbacks = new Map<string, (value: unknown) => void>();
+  mocks.listen.mockImplementation((name, callback) => {
+    callbacks.set(name, callback);
+    return Promise.resolve(vi.fn());
+  });
+  let bootstrap!: (value: unknown) => void;
+  mocks.bootstrap.mockImplementation(
+    () =>
+      new Promise((resolve) => {
+        bootstrap = resolve;
+      }),
+  );
+  const app = createSession();
+  const initializing = app.initialize();
+  await vi.waitFor(() => expect(bootstrap).toBeTypeOf('function'));
+  callbacks.get('session-state')?.(initial.session);
+  const terminal = {
+    id: 'first',
+    generation: 3,
+    kind: 'copy',
+    status: 'completed',
+    name: 'one.mp4',
+    completed: 1,
+    count: 1,
+    bytes: 10,
+    total: 10,
+    message: '',
+    results: [],
+  };
+  callbacks.get('file-job')?.({ ...terminal, status: 'queued' });
+  bootstrap({ ...initial, jobs: [terminal] });
+  await initializing;
+  expect(app.data.jobs.find((job) => job.id === 'first')?.status).toBe(
+    'completed',
+  );
+  app.dispose();
+});
+
 it('file success cannot overwrite an unrelated verification message', async () => {
   const callbacks = new Map<string, (value: unknown) => void>();
   mocks.listen.mockImplementation(
