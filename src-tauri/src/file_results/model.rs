@@ -1,7 +1,7 @@
 use super::*;
 use serde::Deserialize;
 use serde_json::Value;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 #[derive(Default)]
 pub struct FileResults {
@@ -12,6 +12,7 @@ pub struct FileResults {
     history: Vec<FileNotice>,
     pending: HashMap<ResultKey, Pending>,
     aliases: HashMap<ResultKey, ResultKey>,
+    accepted: HashSet<ResultKey>,
 }
 struct Seen {
     summary: FileNotice,
@@ -55,21 +56,57 @@ impl FileResults {
                 return false;
             }
             self.generation = generation;
-            self.pending.clear();
-            self.aliases.clear();
+            self.pending.retain(|key, _| self.accepted.contains(key));
+            self.aliases.retain(|generic, canonical| {
+                self.accepted.contains(generic) || self.seen.contains_key(canonical)
+            });
             self.revision += 1;
             return true;
         }
         if generation != self.generation {
-            return false;
+            // Accepted work can settle into its original history after disconnect;
+            // unknown stale work and old active progress remain fenced out.
+            if generation > self.generation
+                || (event == "file-job"
+                    && !matches!(
+                        payload["status"].as_str(),
+                        Some("completed" | "failed" | "cancelled")
+                    ))
+            {
+                return false;
+            }
+            let key = match event {
+                "file-job" if text(payload, "discard_operation_id").is_some() => Self::key(
+                    generation,
+                    ResultOwner::Discard,
+                    text(payload, "discard_operation_id").unwrap(),
+                ),
+                "file-job" | "file-index-warning" | "file-metadata-warning" => {
+                    let Some(id) = text(payload, "id") else {
+                        return false;
+                    };
+                    Self::key(generation, ResultOwner::Job, id)
+                }
+                "discard-result" => {
+                    let Some(id) = text(payload, "operation_id") else {
+                        return false;
+                    };
+                    Self::key(generation, ResultOwner::Discard, id)
+                }
+                _ => return false,
+            };
+            let key = self.aliases.get(&key).unwrap_or(&key);
+            if !self.accepted.contains(key) && !self.seen.contains_key(key) {
+                return false;
+            }
         }
         let changed = match event {
-            "file-job" => self.job(payload, now_ms),
-            "discard-result" => self.discard(payload, now_ms),
+            "file-job" => self.job(payload, generation, now_ms),
+            "discard-result" => self.discard(payload, generation, now_ms),
             "file-index-warning" | "file-metadata-warning" => {
                 match (text(payload, "id"), text(payload, "code")) {
                     (Some(id), Some(code)) => {
-                        let key = self.key(ResultOwner::Job, id);
+                        let key = Self::key(generation, ResultOwner::Job, id);
                         let key = self.aliases.get(&key).cloned().unwrap_or(key);
                         self.warning(key, code)
                     }
@@ -96,7 +133,19 @@ impl FileResults {
         self.prune_history();
         true
     }
-    pub fn snapshot(&self, now_ms: u64) -> FileResultSnapshot {
+    pub fn snapshot(&mut self, now_ms: u64) -> FileResultSnapshot {
+        // Main notices need full details even after the separate history cap.
+        // Retired notices keep only their compact deduplication summary here.
+        for seen in self.seen.values_mut() {
+            if seen.acknowledged == Some(seen.summary.revision)
+                || seen
+                    .summary
+                    .expires_at_ms
+                    .is_some_and(|deadline| now_ms >= deadline)
+            {
+                seen.summary.results.clear();
+            }
+        }
         let mut eligible = self
             .seen
             .values()
@@ -125,26 +174,37 @@ impl FileResults {
             history: self.history.clone(),
         }
     }
-    fn key(&self, owner: ResultOwner, id: &str) -> ResultKey {
+    fn key(generation: u64, owner: ResultOwner, id: &str) -> ResultKey {
         ResultKey {
-            generation: self.generation,
+            generation,
             owner,
             operation_id: id.into(),
         }
     }
-    fn job(&mut self, payload: &Value, now_ms: u64) -> bool {
+    fn job(&mut self, payload: &Value, generation: u64, now_ms: u64) -> bool {
         let Ok(job) = serde_json::from_value::<JobInput>(payload.clone()) else {
             return false;
         };
         if job.id.is_empty() {
             return false;
         }
+        if job.discard_operation_id.as_deref() == Some("") {
+            return false;
+        }
+        if generation == self.generation && matches!(job.status.as_str(), "queued" | "running") {
+            self.accepted
+                .insert(Self::key(generation, ResultOwner::Job, &job.id));
+            if let Some(operation) = &job.discard_operation_id {
+                self.accepted
+                    .insert(Self::key(generation, ResultOwner::Discard, operation));
+            }
+        }
         if let Some(operation) = job.discard_operation_id {
             if operation.is_empty() {
                 return false;
             }
-            let generic = self.key(ResultOwner::Job, &job.id);
-            let key = self.key(ResultOwner::Discard, &operation);
+            let generic = Self::key(generation, ResultOwner::Job, &job.id);
+            let key = Self::key(generation, ResultOwner::Discard, &operation);
             self.aliases.insert(generic.clone(), key.clone());
             let orphan = self.pending.remove(&generic).unwrap_or_default();
             let mut changed = false;
@@ -164,7 +224,7 @@ impl FileResults {
                     _ => "failed",
                 };
                 if job.status == expected {
-                    changed |= self.enrich(&key, &details);
+                    changed |= self.enrich(&key, &details, now_ms);
                 }
             } else {
                 let pending = self.pending.entry(key).or_default();
@@ -184,7 +244,7 @@ impl FileResults {
             "cancelled" => FileOutcome::Cancelled,
             _ => return false,
         };
-        let key = self.key(ResultOwner::Job, &job.id);
+        let key = Self::key(generation, ResultOwner::Job, &job.id);
         let code = if job.message.is_empty() {
             job.status
         } else {
@@ -207,7 +267,7 @@ impl FileResults {
             now_ms,
         )
     }
-    fn discard(&mut self, payload: &Value, now_ms: u64) -> bool {
+    fn discard(&mut self, payload: &Value, generation: u64, now_ms: u64) -> bool {
         let (Some(id), Some(status), Some(code)) = (
             text(payload, "operation_id"),
             text(payload, "status"),
@@ -221,7 +281,7 @@ impl FileResults {
             "outcome_unknown" => FileOutcome::OutcomeUnknown,
             _ => return false,
         };
-        let key = self.key(ResultOwner::Discard, id);
+        let key = Self::key(generation, ResultOwner::Discard, id);
         let details = self.pending.get(&key).and_then(|p| p.details.clone());
         self.insert(
             FileNotice {
@@ -257,8 +317,7 @@ impl FileResults {
             }
         }
         self.order += 1;
-        let mut summary = notice.clone();
-        summary.results.clear();
+        let summary = notice.clone();
         self.seen.insert(
             notice.key.clone(),
             Seen {
@@ -291,7 +350,7 @@ impl FileResults {
             false
         }
     }
-    fn enrich(&mut self, key: &ResultKey, details: &Details) -> bool {
+    fn enrich(&mut self, key: &ResultKey, details: &Details, now_ms: u64) -> bool {
         let seen = self.seen.get_mut(key).unwrap();
         let name = if details.name.is_empty() {
             &seen.summary.name
@@ -301,11 +360,23 @@ impl FileResults {
         let name_changed = seen.summary.name != *name;
         seen.summary.name = name.clone();
         let history = self.history.iter_mut().find(|entry| entry.key == *key);
-        let details_changed = history
+        let eligible = seen.acknowledged != Some(seen.summary.revision)
+            && seen
+                .summary
+                .expires_at_ms
+                .is_none_or(|deadline| now_ms < deadline);
+        let previous_details = history
             .as_ref()
-            .is_some_and(|entry| !details.results.is_empty() && entry.results != details.results);
+            .map(|entry| &entry.results)
+            .unwrap_or(&seen.summary.results);
+        let details_changed = (eligible || history.is_some())
+            && !details.results.is_empty()
+            && *previous_details != details.results;
         if !name_changed && !details_changed {
             return false;
+        }
+        if details_changed {
+            seen.summary.results = details.results.clone();
         }
         if let Some(history) = history {
             history.name = seen.summary.name.clone();

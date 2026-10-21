@@ -43,7 +43,7 @@ impl FileResultStore {
         Some(model.revision())
     }
     pub fn snapshot(&self) -> FileResultSnapshot {
-        let model = self.model.lock().unwrap();
+        let mut model = self.model.lock().unwrap();
         model.snapshot((self.clock)())
     }
     pub fn acknowledge(&self, key: &ResultKey, revision: u64) -> Option<u64> {
@@ -104,6 +104,53 @@ mod tests {
         assert_eq!(store.acknowledge(&old.key, old.revision), None);
         clock.store(99_999, Ordering::Relaxed);
         assert_eq!(store.snapshot().notices[0].revision, 2);
+    }
+    #[test]
+    fn accepted_rename_settles_historically_after_disconnect() {
+        let (store, _) = store();
+        store.receive("file-job", &job("rename", "running"));
+        store.receive(
+            "file-metadata-warning",
+            &warning("rename", "rename_refresh_pending"),
+        );
+        store.receive("session-state", &json!({"generation":8}));
+        let mut completed = job("rename", "completed");
+        completed["kind"] = json!("rename");
+        completed["results"][0]["destination_name"] = json!("new.mp4");
+        assert!(store.receive("file-job", &completed).is_some());
+        assert!(
+            store
+                .receive(
+                    "file-index-warning",
+                    &warning("rename", "media_index_pending")
+                )
+                .is_some()
+        );
+        let old = store.snapshot().history[0].clone();
+        assert_eq!(old.key.generation, 7);
+        assert_eq!(old.results[0].destination_name.as_deref(), Some("new.mp4"));
+        assert_eq!(
+            old.warnings,
+            ["rename_refresh_pending", "media_index_pending"]
+        );
+        assert_eq!(old.outcome, crate::file_results::FileOutcome::Warning);
+        assert!(
+            store
+                .receive("file-job", &job("unknown", "completed"))
+                .is_none()
+        );
+        assert!(
+            store
+                .receive("file-job", &job("rename", "queued"))
+                .is_none()
+        );
+        let mut new = job("rename", "failed");
+        new["generation"] = json!(8);
+        store.receive("file-job", &new);
+        assert_eq!(store.snapshot().history.len(), 2);
+        store.acknowledge(&old.key, old.revision);
+        assert_eq!(store.snapshot().notices.len(), 1);
+        assert_eq!(store.snapshot().notices[0].key.generation, 8);
     }
     #[test]
     fn replay_has_no_audio() {

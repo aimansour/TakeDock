@@ -4,6 +4,7 @@ use std::{
     time::{Duration, Instant},
 };
 use takedock_lib::{
+    file_results::FileResultStore,
     files::{FileService, JobKind, Video},
     model::Settings,
     session::Engine,
@@ -41,6 +42,7 @@ struct Fixture {
     files: FileService,
     events: Arc<Mutex<Vec<serde_json::Value>>>,
     named_events: Arc<Mutex<Vec<(String, serde_json::Value)>>>,
+    results: Arc<FileResultStore>,
     videos: Vec<Video>,
 }
 impl Fixture {
@@ -66,7 +68,13 @@ impl Fixture {
         let output = events.clone();
         let named_events = Arc::new(Mutex::new(vec![]));
         let named_output = named_events.clone();
+        let started = Instant::now();
+        let results = Arc::new(FileResultStore::new(Arc::new(move || {
+            u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX)
+        })));
+        let result_output = results.clone();
         let sink: takedock_lib::session::EventSink = Arc::new(move |name, value| {
+            result_output.receive(name, &value);
             named_output
                 .lock()
                 .unwrap()
@@ -94,6 +102,7 @@ impl Fixture {
             files,
             events,
             named_events,
+            results,
             videos,
         }
     }
@@ -262,6 +271,21 @@ fn late_cancel_after_rename_ack_keeps_completed() {
         assert_eq!(result["status"], "completed");
         assert_eq!(result["results"][0]["destination_name"], "renamed.mp4");
         assert!(fixture.original("renamed.mp4").exists());
+        let snapshot = fixture.results.snapshot();
+        let notice = snapshot
+            .history
+            .iter()
+            .find(|notice| notice.key.operation_id == id)
+            .expect("Committed rename must remain in shared history after disconnect");
+        assert_eq!(
+            notice.results[0].destination_name.as_deref(),
+            Some("renamed.mp4")
+        );
+        assert_eq!(notice.completed, 1);
+        assert_eq!(
+            notice.key.generation,
+            result["generation"].as_u64().unwrap()
+        );
     }
 }
 

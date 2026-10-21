@@ -169,6 +169,77 @@ fn evicted_duplicate_cannot_revive() {
 }
 
 #[test]
+fn visible_success_keeps_complete_details_beyond_history_capacity() {
+    let mut model = model();
+    let mut renamed = job("renamed", "completed");
+    renamed["kind"] = json!("rename");
+    renamed["results"][0]["destination_name"] = json!("new.mp4");
+    model.receive("file-job", &renamed, 0);
+    for i in 0..25 {
+        model.receive("file-job", &job(&format!("later-{i}"), "completed"), i + 1);
+    }
+    let snapshot = model.snapshot(9_999);
+    assert!(
+        !snapshot
+            .history
+            .iter()
+            .any(|n| n.key.operation_id == "renamed")
+    );
+    let visible = snapshot
+        .notices
+        .iter()
+        .find(|n| n.key.operation_id == "renamed")
+        .unwrap();
+    assert_eq!(visible.results.len(), 1);
+    assert_eq!(
+        visible.results[0].destination_name.as_deref(),
+        Some("new.mp4")
+    );
+    assert!(
+        !model
+            .snapshot(10_000)
+            .notices
+            .iter()
+            .any(|n| n.key.operation_id == "renamed")
+    );
+}
+
+#[test]
+fn accepted_discard_alias_keeps_late_details_after_generation_and_history_churn() {
+    let mut model = model();
+    let mut generic = job("delete-job", "queued");
+    generic["kind"] = json!("delete");
+    generic["discard_operation_id"] = json!("op");
+    model.receive("file-job", &generic, 0);
+    model.receive("session-state", &json!({"generation":8}), 1);
+    assert!(model.receive("discard-result", &discard("op", "completed"), 2));
+    for index in 0..25 {
+        let mut current = job(&format!("later-{index}"), "completed");
+        current["generation"] = json!(8);
+        model.receive("file-job", &current, 3);
+    }
+    generic["status"] = json!("completed");
+    generic["results"][0]["status"] = json!("completed");
+    assert!(model.receive("file-job", &generic, 4));
+    assert!(model.receive(
+        "file-index-warning",
+        &warning("delete-job", "media_index_pending"),
+        5
+    ));
+    let snapshot = model.snapshot(5);
+    let notice = snapshot
+        .notices
+        .iter()
+        .find(|notice| notice.key.operation_id == "op")
+        .unwrap();
+    assert_eq!(notice.key.generation, 7);
+    assert_eq!(notice.key.owner, ResultOwner::Discard);
+    assert_eq!(notice.results[0].status, "completed");
+    assert_eq!(notice.warnings, ["media_index_pending"]);
+    assert!(!model.receive("discard-result", &discard("unknown", "completed"), 6));
+}
+
+#[test]
 fn owner_namespace_and_malformed_evidence_cannot_dismiss_another_result() {
     let mut model = model();
     model.receive("file-job", &job("same", "failed"), 0);

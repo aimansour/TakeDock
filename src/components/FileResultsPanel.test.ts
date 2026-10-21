@@ -204,6 +204,29 @@ it('open_history_pins_displayed_records_past_twenty', async () => {
   await tick();
   expect(container.querySelectorAll('details article')).toHaveLength(20);
 });
+it('keeps a focused rename destination through history eviction and passive retirement', async () => {
+  const first = notice('first');
+  const { rerender, container } = render(FileResultsPanel, props([first]));
+  const button = screen.getByRole('button', {
+    name: /Hide result.*first\.mp4/,
+  });
+  button.focus();
+  const newer = Array.from({ length: 25 }, (_, index) =>
+    notice(`later-${index}`),
+  );
+  await rerender({ notices: [...newer, first], history: newer.slice(0, 20) });
+  const card = container.querySelector(
+    '[data-operation-id="first"]',
+  ) as HTMLElement;
+  expect(card.querySelector('[data-committed-name]')).toHaveTextContent(
+    'renamed.mp4',
+  );
+  await rerender({ notices: newer });
+  expect(card.querySelector('[data-committed-name]')).toHaveTextContent(
+    'renamed.mp4',
+  );
+  expect(button).toHaveFocus();
+});
 it('renders Arabic native labels and empty history', () => {
   render(FileResultsPanel, { ...props([]), language: 'ar' });
   expect(screen.getByText('سجل العمليات')).toBeInTheDocument();
