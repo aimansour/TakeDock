@@ -5,11 +5,19 @@ import type {
   Settings,
   RecordingAction,
   SessionState,
+  FileNotice,
 } from './types';
+import { FileResultsController, type FileResultView } from './file-results';
 import { RecordingController } from './recording';
 import { ipc } from './ipc';
 import { UpdaterController } from './updater';
 import type { UpdateState } from './updater';
+function retainJobs(jobs: JobEvent[]): JobEvent[] {
+  let terminal = 0;
+  return jobs.filter(
+    (job) => ['queued', 'running'].includes(job.status) || ++terminal <= 20,
+  );
+}
 export function createSession() {
   const data = $state({
     session: { ...initialSession },
@@ -18,6 +26,7 @@ export function createSession() {
     videos: [] as Video[],
     listingGeneration: 0,
     jobs: [] as JobEvent[],
+    fileResults: { notices: [], history: [] } as FileResultView,
     result: '',
     loading: false,
     view: 'recording' as 'recording' | 'videos' | 'settings',
@@ -44,6 +53,19 @@ export function createSession() {
     data.result = message;
     sound(false);
   };
+  const fileResults = new FileResultsController({
+    read: ipc.fileResults,
+    acknowledge: ipc.acknowledgeFileResult,
+    now: () => performance.now(),
+    schedule: (callback, delay) => setTimeout(callback, delay),
+    cancel: (timer) => clearTimeout(timer),
+    changed: (view) => {
+      if (!destroyed) data.fileResults = view;
+    },
+    failed: (error) => {
+      if (!destroyed) fail(String(error));
+    },
+  });
   const controller = new RecordingController(
     initialSession,
     ipc.recording,
@@ -87,18 +109,22 @@ export function createSession() {
       )
         return;
     }
-    if (index >= 0) data.jobs[index] = event;
-    else data.jobs = [event, ...data.jobs].slice(0, 20);
+    const jobs = [...data.jobs];
+    if (index >= 0) jobs[index] = event;
+    else jobs.unshift(event);
+    data.jobs = retainJobs(jobs);
     if (['completed', 'failed', 'cancelled'].includes(event.status)) {
       progress.delete(event.id);
       if (event.discard_operation_id) return;
-      data.result = event.status === 'completed' ? 'completed' : event.message;
       void refresh();
     }
   }
   async function initialize() {
     try {
       const outcomes = await Promise.allSettled([
+        ipc.listen<{ revision: number }>('file-results-changed', (value) => {
+          if (!destroyed) void fileResults.refresh(value.revision);
+        }),
         ipc.listen<Settings>('settings-changed', (settings) => {
           if (!destroyed) {
             settingsRevision++;
@@ -130,7 +156,6 @@ export function createSession() {
           discardResults.add(value.operation_id);
           if (discardResults.size > 128)
             discardResults.delete(discardResults.values().next().value!);
-          data.result = value.code || `discard_${value.status}`;
           if (value.status === 'completed') void refresh();
         }),
         ipc.listen<{
@@ -169,13 +194,6 @@ export function createSession() {
               progress.clear();
             }, 100);
         }),
-        ipc.listen<{ generation: number; code: string }>(
-          'file-index-warning',
-          (value) => {
-            if (!destroyed && value.generation === data.session.generation)
-              data.result = value.code;
-          },
-        ),
       ]);
       const subscriptions = outcomes.flatMap((outcome) =>
         outcome.status === 'fulfilled' ? [outcome.value] : [],
@@ -194,19 +212,21 @@ export function createSession() {
         throw rejected.reason;
       }
       const revision = settingsRevision;
+      const requestedAt = performance.now();
       const initial = await ipc.bootstrap();
       if (destroyed) return;
       if (settingsRevision === revision) data.settings = initial.settings;
       data.windowName = initial.window_name;
       controller.reconcile(initial.session);
+      fileResults.accept(initial.file_results, requestedAt);
       const existing = new Set(data.jobs.map((job) => job.id));
-      data.jobs = [
+      data.jobs = retainJobs([
         ...data.jobs,
         ...initial.jobs.filter(
           (job) =>
             !existing.has(job.id) && job.generation === data.session.generation,
         ),
-      ].slice(0, 20);
+      ]);
       if (initial.errors.length) data.result = initial.errors.join('\n');
       if (initial.check_at_startup) void updater.checkForUpdate('startup');
     } catch (error) {
@@ -283,6 +303,7 @@ export function createSession() {
   }
   function dispose() {
     destroyed = true;
+    fileResults.dispose();
     refreshSerial++;
     unlisten.forEach((stop) => stop());
     unlisten = [];
@@ -298,6 +319,7 @@ export function createSession() {
     discard,
     fail,
     dispose,
+    hideFileResult: (notice: FileNotice) => fileResults.hide(notice),
     newWindow: () => {
       void ipc.newWindow().catch((error) => fail(String(error)));
     },
@@ -335,7 +357,7 @@ export function createSession() {
             generation === data.session.generation &&
             !data.jobs.some((job) => job.id === id)
           )
-            data.jobs = [
+            data.jobs = retainJobs([
               {
                 id,
                 generation,
@@ -350,7 +372,7 @@ export function createSession() {
                 results: [],
               },
               ...data.jobs,
-            ].slice(0, 20);
+            ]);
         })
         .catch((error) => fail(String(error)));
     },

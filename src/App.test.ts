@@ -9,6 +9,8 @@ const mocks = vi.hoisted(() => ({
   discard: vi.fn(),
   sound: vi.fn(),
   videos: vi.fn(),
+  fileResults: vi.fn(),
+  acknowledgeFileResult: vi.fn(),
 }));
 vi.mock('./lib/ipc', () => ({ ipc: mocks }));
 import App from './App.svelte';
@@ -19,6 +21,7 @@ beforeEach(() => {
     settings: defaultSettings,
     errors: [],
     window_name: '',
+    file_results: { revision: 0, now_ms: 0, notices: [], history: [] },
     jobs: [],
     check_at_startup: false,
     session: {
