@@ -447,9 +447,11 @@ type Remote = crate::helper::HelperClient;
 impl Remote {
     fn job_output(&self, job: &Job, args: &[&str], timeout: u64) -> Result<Vec<u8>, String> {
         check(job)?;
+        // Mutation acknowledgement requires shell-v2's remote exit status.
+        // Legacy exec-out can exit 0 even when the helper rejected the operation.
         job.lease.adb.output_with_cancellation(
             &job.lease.serial,
-            &["exec-out", &self.command(args)?],
+            &["shell", "-T", &self.command(args)?],
             timeout,
             &[&job.lease.cancelled, &job.cancel],
         )
