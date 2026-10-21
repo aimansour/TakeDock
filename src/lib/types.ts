@@ -65,6 +65,50 @@ export interface Video {
   duration_ms?: number | null;
 }
 export type JobKind = 'copy' | 'move' | 'delete' | 'rename';
+export interface ResultKey {
+  generation: number;
+  owner: 'job' | 'discard';
+  operation_id: string;
+}
+export interface ResultItem {
+  name: string;
+  status: string;
+  message: string;
+  requested_name?: string | null;
+  destination_name?: string | null;
+}
+export interface FileNotice {
+  key: ResultKey;
+  revision: number;
+  kind: JobKind;
+  outcome:
+    | 'completed'
+    | 'failed'
+    | 'cancelled'
+    | 'retained'
+    | 'outcome_unknown'
+    | 'warning';
+  code: string;
+  warnings: string[];
+  name: string;
+  completed: number;
+  count: number;
+  results: ResultItem[];
+  expires_at_ms: number | null;
+}
+export interface FileResultSnapshot {
+  revision: number;
+  now_ms: number;
+  notices: FileNotice[];
+  history: FileNotice[];
+}
+export interface RenameUpdate {
+  generation: number;
+  id: string;
+  source_name: string;
+  source_identity: string;
+  video: Video;
+}
 export interface JobEvent {
   discard_operation_id?: string | null;
   id: string;

@@ -43,6 +43,9 @@ struct JobInput {
     discard_operation_id: Option<String>,
 }
 impl FileResults {
+    pub(super) fn revision(&self) -> u64 {
+        self.revision
+    }
     pub fn receive(&mut self, event: &str, payload: &Value, now_ms: u64) -> bool {
         let Some(generation) = payload["generation"].as_u64() else {
             return false;

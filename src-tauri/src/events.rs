@@ -39,8 +39,16 @@ impl Events {
                     self.jobs[index] = value.clone();
                 } else {
                     self.jobs.insert(0, value.clone());
-                    self.jobs.truncate(20);
                 }
+                let mut terminal = 0;
+                self.jobs.retain(|job| {
+                    if matches!(job["status"].as_str(), Some("queued" | "running")) {
+                        true
+                    } else {
+                        terminal += 1;
+                        terminal <= 20
+                    }
+                });
                 if value["discard_operation_id"].is_string() {
                     return None;
                 }
@@ -94,6 +102,23 @@ impl Events {
 mod tests {
     use super::*;
     use serde_json::json;
+    #[test]
+    fn active_jobs_survive_twenty_terminals() {
+        let mut events = Events::default();
+        events.receive("session-state", &json!({"generation":7}));
+        events.receive(
+            "file-job",
+            &json!({"generation":7,"id":"held","status":"running"}),
+        );
+        for i in 0..25 {
+            events.receive(
+                "file-job",
+                &json!({"generation":7,"id":format!("done-{i}"),"status":"completed"}),
+            );
+        }
+        assert!(events.jobs.iter().any(|job| job["id"] == "held"));
+        assert_eq!(events.jobs.len(), 21);
+    }
     #[test]
     fn older_session_state_cannot_restore_a_discard_feedback_generation() {
         let mut events = Events::default();

@@ -3,6 +3,8 @@ use serde::{Deserialize, Serialize};
 
 mod model;
 pub use model::FileResults;
+mod service;
+pub use service::FileResultStore;
 
 #[derive(Clone, Debug, Hash, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]

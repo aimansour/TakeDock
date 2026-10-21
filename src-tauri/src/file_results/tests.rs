@@ -6,13 +6,13 @@ fn model() -> FileResults {
     model.receive("session-state", &json!({"generation":7}), 0);
     model
 }
-fn job(id: &str, status: &str) -> Value {
+pub(super) fn job(id: &str, status: &str) -> Value {
     json!({"generation":7,"id":id,"kind":"copy","status":status,
         "name":"رحلة.mp4","completed":usize::from(status == "completed"),"count":1,
         "message":if status == "failed" {"copy_hash_mismatch"} else {""},
         "results":[{"name":"رحلة.mp4","status":status,"message":""}]})
 }
-fn warning(id: &str, code: &str) -> Value {
+pub(super) fn warning(id: &str, code: &str) -> Value {
     json!({"generation":7,"id":id,"code":code})
 }
 fn discard(id: &str, status: &str) -> Value {
