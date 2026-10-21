@@ -1,4 +1,14 @@
 const en = {
+  operationHistory: 'Operation history',
+  hideFileResult: 'Hide result',
+  noFileHistory: 'No completed file operations yet.',
+  fileResults: 'File results',
+  requestedName: 'Requested name',
+  warning: 'Completed with a warning',
+  retained: 'Retained on phone',
+  outcome_unknown: 'Result unknown',
+  rename_refresh_pending:
+    'The rename completed, but the video list still needs to refresh.',
   duration: 'Duration',
   durationUnavailable: 'Duration unavailable',
   hours: 'hours',
@@ -195,6 +205,16 @@ const en = {
   adb_not_found: 'ADB was not found. Set its executable path in Settings.',
 } as const;
 const ar: Record<keyof typeof en, string> = {
+  operationHistory: 'سجل العمليات',
+  hideFileResult: 'إخفاء النتيجة',
+  noFileHistory: 'لا توجد عمليات ملفات مكتملة بعد.',
+  fileResults: 'نتائج عمليات الملفات',
+  requestedName: 'الاسم المطلوب',
+  warning: 'اكتملت مع تنبيه',
+  retained: 'بقي على الهاتف',
+  outcome_unknown: 'النتيجة غير معروفة',
+  rename_refresh_pending:
+    'تمت إعادة التسمية، لكن قائمة الفيديوهات ما زالت تحتاج إلى تحديث.',
   duration: 'المدة',
   durationUnavailable: 'المدة غير متاحة',
   hours: 'ساعة',

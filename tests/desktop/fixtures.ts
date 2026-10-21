@@ -117,6 +117,20 @@ export function deleteCalls() {
 }
 export const button = (name: string) =>
   $(`//button[normalize-space(.)=${JSON.stringify(name)}]`);
+export async function fileResults() {
+  return browser.execute(async () => {
+    const api = (
+      window as unknown as {
+        __TAURI_INTERNALS__: {
+          invoke: (
+            command: string,
+          ) => Promise<import('../../src/lib/types').FileResultSnapshot>;
+        };
+      }
+    ).__TAURI_INTERNALS__;
+    return api.invoke('file_results');
+  });
+}
 export async function shortcut(key: string) {
   await browser.keys(['Control', 'Shift', key, 'NULL']);
 }

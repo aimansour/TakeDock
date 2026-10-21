@@ -8,13 +8,13 @@ in place as its action changes between Start and Stop. Pause changes to Resume
 in place. If a focused pause/resume control disappears on stopping, focus moves
 to the primary control. Inapplicable controls are absent.
 
-| Shortcut | Action |
-| --- | --- |
-| Ctrl+Shift+R | Start or stop recording |
+| Shortcut     | Action                    |
+| ------------ | ------------------------- |
+| Ctrl+Shift+R | Start or stop recording   |
 | Ctrl+Shift+P | Pause or resume recording |
-| Ctrl+Shift+V | Open and refresh Videos |
-| Ctrl+Shift+S | Open Settings |
-| Ctrl+Shift+N | Open another window |
+| Ctrl+Shift+V | Open and refresh Videos   |
+| Ctrl+Shift+S | Open Settings             |
+| Ctrl+Shift+N | Open another window       |
 
 Shortcuts work inside TakeDock, even while a file job is running. They are ignored
 inside text/select inputs, during composition, and on repeated keydown events.
@@ -56,3 +56,18 @@ including while the checkbox is selected. Progress/results are ordinary text
 with no automatic announcements. Missing/split/ambiguous file evidence leaves
 ordinary Stop available; use explicit selection and confirmation in Videos.
 An unknown deletion result requires inspecting Videos before further action.
+
+A clean file success remains in the main result area and Activity for ten
+seconds, measured once for all windows. Failures, cancellations, retained or
+unknown outcomes and warnings remain until **Hide result**. Hiding acknowledges
+that result across windows and never cancels work. Active jobs have separate
+**Cancel** buttons. **Operation history** is a native disclosure, closed when
+each window opens; it retains per-file details for this running process. While
+open, its displayed records stay until you close it, even as newer operations
+arrive. Closing the application clears this process-local history.
+
+If focus is inside an expired/hidden result, that window keeps the card until
+focus leaves. Passive expiry and hiding in another window do not move focus.
+An explicit local Hide may move focus to the next Hide button or history summary
+only while its button still owns focus. A confirmed rename updates the selected
+checkbox's name and current identity without replacing its native control.

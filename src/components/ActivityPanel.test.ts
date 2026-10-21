@@ -1,7 +1,20 @@
 import { render, screen } from '@testing-library/svelte';
 import { it, expect } from 'vitest';
 import ActivityPanel from './ActivityPanel.svelte';
-import type { JobEvent } from '../lib/types';
+import type { JobEvent, FileNotice } from '../lib/types';
+const notice = (outcome: FileNotice['outcome'] = 'completed'): FileNotice => ({
+  key: { generation: 3, owner: 'job', operation_id: 'one' },
+  revision: 1,
+  kind: 'copy',
+  outcome,
+  code: outcome === 'failed' ? 'copy_hash_mismatch' : outcome,
+  warnings: [],
+  name: 'one.mp4',
+  completed: outcome === 'completed' ? 2 : 0,
+  count: 2,
+  results: [],
+  expires_at_ms: outcome === 'completed' ? 10000 : null,
+});
 const job: JobEvent = {
   id: 'one',
   generation: 3,
@@ -19,6 +32,7 @@ const job: JobEvent = {
 it('shows indeterminate listing progress while keeping completed results available afterwards', async () => {
   const { rerender } = render(ActivityPanel, {
     jobs: [{ ...job, status: 'completed' }],
+    notices: [notice()],
     loading: true,
     language: 'en',
   });
@@ -45,7 +59,10 @@ it('exposes native changing progress without live speech and keeps verification 
   progress = screen.getByRole('progressbar', { name: 'Activity progress' });
   expect(progress).not.toHaveAttribute('value');
   expect(screen.getByText('Verifying copied video')).toBeInTheDocument();
-  await rerender({ jobs: [{ ...job, status: 'completed', completed: 2 }] });
+  await rerender({
+    jobs: [{ ...job, status: 'completed', completed: 2 }],
+    notices: [notice()],
+  });
   progress = screen.getByRole('progressbar', { name: 'Activity progress' });
   expect(progress).toHaveAttribute('value', '100');
   expect(screen.getByText('Completed')).toBeInTheDocument();
@@ -62,7 +79,23 @@ it('keeps active processing visible before newer queued jobs and reports failure
   expect(screen.getByText('Copying video')).toBeInTheDocument();
   await rerender({
     jobs: [{ ...job, status: 'failed', message: 'copy_hash_mismatch' }],
+    notices: [notice('failed')],
   });
   expect(screen.getByText('Failed')).toBeInTheDocument();
   expect(screen.getByText(/The copied file did not match/)).toBeInTheDocument();
+});
+it('retires terminal progress and keeps all active jobs cancellable', async () => {
+  const { rerender } = render(ActivityPanel, {
+    jobs: [{ ...job, status: 'completed' }],
+    notices: [],
+    loading: false,
+    language: 'en',
+  });
+  expect(screen.getByRole('progressbar')).toHaveAttribute('value', '0');
+  expect(screen.getByText('Ready')).toBeInTheDocument();
+  await rerender({
+    jobs: [job, { ...job, id: 'queued', status: 'queued' }],
+    notices: [notice('failed')],
+  });
+  expect(screen.getAllByRole('button', { name: /Cancel/ })).toHaveLength(2);
 });
