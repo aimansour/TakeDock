@@ -308,8 +308,9 @@ fn main() {
                 std::process::exit(2)
             }
             if let Err(error) = file_command(&root, &args[1..]) {
-                eprintln!("{error}");
-                std::process::exit(1)
+                // Legacy exec transport merges remote output and does not
+                // report the remote exit code. Only shell -T does that.
+                println!("{error}");
             }
         }
         _ => {

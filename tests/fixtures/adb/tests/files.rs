@@ -428,6 +428,51 @@ fn rename_requires_one_selection_and_never_overwrites() {
     assert!(fixture.original("renamed.mp4").exists());
 }
 #[test]
+fn legacy_exec_success_is_not_remote_rename_acknowledgement() {
+    let fixture = Fixture::new(20);
+    let video = fixture
+        .videos
+        .iter()
+        .find(|video| video.name == "a'b.mp4")
+        .unwrap()
+        .clone();
+    let source_bytes = std::fs::read(fixture.original(&video.name)).unwrap();
+    let destination_bytes = std::fs::read(fixture.original("رحلة.mp4")).unwrap();
+    let id = fixture
+        .files
+        .start_job(
+            fixture.engine.lease().unwrap(),
+            JobKind::Rename,
+            vec![video.clone()],
+            Path::new("").into(),
+            Some("رحلة".into()),
+        )
+        .unwrap();
+    let result = fixture.result(&id);
+    assert_eq!(
+        result["status"], "failed",
+        "local exec-out exit 0 cannot acknowledge a remote failure"
+    );
+    assert!(result["results"][0]["destination_name"].is_null());
+    assert_eq!(result["results"][0]["requested_name"], "رحلة.mp4");
+    assert_eq!(
+        std::fs::read(fixture.original(&video.name)).unwrap(),
+        source_bytes
+    );
+    assert_eq!(
+        std::fs::read(fixture.original("رحلة.mp4")).unwrap(),
+        destination_bytes
+    );
+    assert!(
+        !fixture
+            .named_events
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|(name, value)| name == "file-renamed" && value["id"] == id)
+    );
+}
+#[test]
 fn cancellation_interrupts_hash_verification_while_capture_dispatch_stays_available() {
     use takedock_lib::model::{RecordingAction, RecordingState};
     let fixture = Fixture::new(10);
