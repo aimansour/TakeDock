@@ -28,7 +28,11 @@ responses for the exact 10,000 ms boundary, unchanged shared deadlines,
 acknowledgement revisions, later warnings, duplicate terminals, disposal and
 retention. Session regressions also deliver acceptance replies, progress and
 bootstrap out of order after more than twenty terminal jobs, ensuring that
-evicted work cannot reappear as active. The reconciler tests deliver A→B→C in both orders, exercise
+evicted work cannot reappear as active. Backend tests also delay queued publication
+past terminal eviction, preserve known accepted outcomes across generation changes,
+and keep complete eligible notice details after more than twenty newer results.
+A focused rename-destination component regression covers history eviction and
+passive retirement. The reconciler tests deliver A→B→C in both orders, exercise
 same-identity A→B→A cycles and preserve exact integer digits above JavaScript's
 safe range. Component tests retain actual checkbox/button objects and distinguish
 passive focus protection from explicit local focus return. Open history retains
@@ -41,7 +45,9 @@ locally, change exclusions or use another subsystem to run it. The unchanged
 Validate workflow runs full workspace tests on fresh hosted runners, including:
 
 - Rename update before held indexing/next job, full destination metadata,
-  post-acknowledgement metadata warnings and cancellation boundaries.
+  post-acknowledgement metadata warnings and cancellation boundaries. The actual
+  FileService event sink includes FileResultStore: post-acknowledgement disconnect
+  must preserve the original-generation historical destination and outcome.
 - Faithful legacy `exec-out` behavior: remote helper failure can accompany local
   exit zero. File mutation acknowledgements therefore use `shell -T` and its
   remote exit status. The real phone's read-only `false` probe returned zero

@@ -1,7 +1,7 @@
 # Shared file results and verified rename acceptance
 
-Status: implementation, physical checks and the complete hosted gate pass;
-the single whole-branch review remains in progress. Audible NVDA assessment was
+Status: implementation and the complete post-review hosted gate pass. The single
+whole-branch review and its one fix pass are complete. Audible NVDA assessment was
 explicitly deferred by the user and is not claimed here.
 
 ## Implemented behavior
@@ -70,8 +70,23 @@ generation-scoped terminal IDs now preserve terminal truth independently of the
 twenty-record presentation cap. A terminal bootstrap replaces an earlier queued
 event, while an older active bootstrap cannot revive completed work.
 
-Local final checks include 98 Rust library tests, 25 helper tests, strict desktop
-Clippy, formatting, zero Svelte diagnostics, 86 UI tests, production frontend and
+The fresh review found two Important lifecycle defects: an accepted committed
+operation could lose its terminal outcome after disconnect, and history eviction
+could strip per-file details from a still-visible success. The executor promoted
+the backend queued-publication race to Important as well: enqueue sends work
+before publishing queued, so an evicted terminal job could later appear active.
+All three regressions were observed failing before the single fix pass.
+
+Known accepted operations may now settle historical outcomes under their original
+generation, without updating current active work or video rows. Eligible notices
+keep complete per-file data independently of the twenty-record history cap; retired
+caches are compacted lazily. Backend terminal IDs prevent late queued publication
+from reviving completed work. The actual hosted FileService sink now feeds the
+shared FileResultStore, and its post-acknowledgement disconnect case asserts the
+durable original-generation destination and outcome rather than raw output alone.
+
+Local final checks include 102 Rust library tests, 25 helper tests, strict desktop
+Clippy, formatting, zero Svelte diagnostics, 87 UI tests, production frontend and
 actual release desktop build. The real signed updater fixture rejects corrupt,
 wrong-version, downgrade and malformed responses without installing anything.
 All three Android helper ABIs build with the updated locked toolchain. Compatible
@@ -80,11 +95,20 @@ dependencies and provenance are documented in
 
 ## Physical phone evidence
 
-Tested source: `e1f72703f06255b02931152b56da1e7cc271dd5d`.
+Tested source: `88ee8f181a80a41d122dbc2cbc42fda99bbe0698`.
 Local release EXE SHA256:
-`2cfd02f63d1821c3613d6701a0c1fff2fae663c7f95add1408047db816220406`.
+`e56552a15bd900231fc8c6be99139d427afdd9e669ae181eabd65e794aa18cb6`.
 Actual arm64 helper SHA256:
 `3388eaf75eda20144f0268905707592b3aeb326dde888e868fb91868be4ad383`.
+Observer APK SHA256:
+`166ded3e31e88f6e9555a6246ac085e3f2b5aab99dc575d1e35a7ab1753bc874`.
+This is the exact final hosted Observer artifact and matches the hosted desktop
+acceptance resource. Preflight caught an obsolete local version-3 APK beside the
+EXE; the ignored resource was replaced with this verified version-4 artifact.
+Android rejected its different CI debug certificate as an in-place update, so
+the previous stateless Observer APK was privately backed up before replacing only
+that package. No personal-media package or ADB pairing was removed. A future
+differently signed Observer may similarly require replacing this test package.
 
 The actual WebDriver-controlled release application passed:
 
@@ -101,21 +125,32 @@ The actual WebDriver-controlled release application passed:
   regions. This proves computed semantics and DOM focus, not audible output or
   screen-reader virtual-cursor behavior.
 
-Seven new clips were journaled; each has a matched-SHA256 local backup and a full
+Eight new clips were journaled; each has a matched-SHA256 local backup and a full
 ffmpeg decode before any rename. Initial pending MediaStore names were allowed
 to finalize before backup; no pending filename was guessed as a final path.
-All twelve unrelated file identities and hashes were unchanged. Backup hashes,
-original app-settings bytes and the current Android accessibility preflight were
-checked afterward; wireless ADB remained connected. TalkBack was externally
-enabled between the earlier trial and this final run. Its current enabled state
-was captured before the final run and preserved; the obsolete earlier disabled
-baseline was not restored. The earlier trial also verified NVDA remained running;
+The original twelve unrelated file identities and hashes were unchanged. The first
+post-review preservation check also detected twenty-six additional files beyond
+that earlier baseline. They were left untouched, captured in a separate
+immutable identity/hash preflight, and included in the final repeated run's
+preservation check: thirty-eight unrelated files in total. The original baseline
+was not overwritten. The repeat reused the already verified same-source expiry
+clip, so no ninth recording was needed.
+Backup hashes, current app-settings preflight bytes and Android accessibility
+preflight were checked afterward; wireless ADB remained connected. Earlier trials
+observed externally changed TalkBack settings. Each final run preserved its own
+current preflight state rather than restoring an obsolete earlier state.
+Ready sound/delay differed from the original trial after the installed application
+had been used. The user confirmed they had not manually changed these settings;
+the cause of the difference is not established. The final run used a separate
+immutable current-settings baseline and preserved it byte-for-byte. Neither the
+original profile nor file baseline was replaced.
+The earlier trial also verified NVDA remained running;
 audible assessment is deferred by the user. Private
 filenames, device identifiers and raw reports are retained outside tracked docs.
 
 WebDriver click-to-Stop-control observations were 1124.827 and 173.436 ms for the
 initial ordinary capture controls at `ca6e781` with the unchanged capture module,
-and 99.567 ms during result lifetime/expiry on the final `e1f7270` EXE. The final
+and 103.550 ms during result lifetime/expiry on the final `88ee8f1` EXE. The final
 run also explicitly proved button focus before and after newer results and their
 passive expiry. Selection is synchronized with the completed UI listing after
 a rejected collision before submitting another rename.
@@ -127,25 +162,29 @@ capture/delete work.
 
 ## Final tree and review gate
 
-[Validate 39592390218](https://github.com/wip-bunker-42/TakeDock/actions/runs/39592390218)
-completed successfully on source `e1f72703f06255b02931152b56da1e7cc271dd5d`:
+[Validate 39597502081](https://github.com/wip-bunker-42/TakeDock/actions/runs/39597502081)
+completed successfully on source `88ee8f181a80a41d122dbc2cbc42fda99bbe0698`:
 all five required Rust/UI/Observer/desktop/quality-gate jobs passed. The downloaded
 `windows-acceptance` artifact records exactly the four required titles, each
 with `passed: true`, and `conclusion: passed`. Existing 90-second case / 15-second
 shared wait bounds remain unchanged.
 
 The artifact's synthetic merge commit is
-`d9f4008929291a2aaf1c4ca457b13ecbd0261939`. Its complete tree and the tested source
-tree both equal `1dcec46f286536743b9117e8b32448706e2bf0b3`. Subsequent evidence-only
+`de4cda6aa0e7cad7f60e65364339d1c4f43005f3`. Its complete tree and the tested source
+tree both equal `d1f7171f46dd19b694b11e806c622e7434cb074b`. Subsequent evidence-only
 commits update this record, the maintenance record and the testing guide; they
 leave the accepted application, tests and tooling unchanged.
 
 Hosted Windows: OS `10.0.26100.0`, Node `26.12.0`, WebView2 and EdgeDriver
 `154.0.4258.62`, tauri-driver `2.1.0`. Hosted tested EXE SHA256:
-`459c746346e1136ad9224b9dd13cba569a4cb03ddee27e0ed9cd6ea4d2b35b89`.
+`6920c0fc3d3a573a15bd58fa9461f26b7a02b860dddfebdb3f06454683355554`.
 This is distinct from the local phone-tested release hash above; both builds
 identify the same source. The physical test used local WebView2/EdgeDriver
 `155.0.4283.62`.
 
-The one fresh whole-branch review is the remaining integration gate and will be
-recorded below after it completes.
+One fresh whole-branch review covered base `4dc44e7` through `3563716`; its two
+Important findings and the executor-promoted race above were fixed in `88ee8f1`.
+The complete post-review workflow, actual four-case artifact and exact source-tree
+comparison passed. Native execution used one review and one fix pass, without a
+second review. One Minor is deferred: the English/Arabic keyboard guides omit the
+explicit twenty ordinary-history bound and unresolved/open-history exceptions.
