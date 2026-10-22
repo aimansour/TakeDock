@@ -74,5 +74,9 @@ Test-TransferCase 'native notice appearing after a snapshot is confirmed from a 
     $run=@{fixture_id='master-500';kind='copy';bytes='4';destination=$destination}
     $result=Invoke-TransferRun -Session @{uri='http://127.0.0.1:1';id='fake'} -Trial $trial -Run $run
     Assert-TransferTest ($result.outcome -eq 'completed' -and $state.snapshots -ge 4) 'Native completion used a stale snapshot.'
+    $evidence=Join-Path $trial.root 'terminal-observation.json'
+    Assert-TransferTest (Test-Path -LiteralPath $evidence) 'Authoritative native terminal evidence was not preserved before validation.'
+    $saved=Get-Content -LiteralPath $evidence -Raw | ConvertFrom-Json -AsHashtable
+    Assert-TransferTest ($saved.file_results.notices[0].key.operation_id -ceq 'job') 'Wrong terminal evidence saved.'
 }
 Write-Output "PASS: $script:Cases UI-measurement cases."

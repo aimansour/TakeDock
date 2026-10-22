@@ -115,6 +115,8 @@ function Invoke-TransferRun {
                 $end=[Diagnostics.Stopwatch]::GetTimestamp()
                 $uncertainty=[math]::Max($uncertainty,100+$observation.Elapsed.TotalMilliseconds)
                 $confirmed=Get-TransferSnapshot $Session
+                $evidence=Assert-TransferLocalPath -Root $Trial.root -Path (Join-Path (Split-Path $destination -Parent) 'terminal-observation.json')
+                $confirmed | ConvertTo-Json -Depth 35 | Set-Content -LiteralPath $evidence
                 $null=Assert-TransferTerminal -JobId $jobId -NoticeId $noticeId -Snapshot $confirmed.file_results
                 $result=@{}+$Run
                 $result.job_id=$jobId;$result.ui_start_ticks=[string]$start;$result.ui_end_ticks=[string]$end
