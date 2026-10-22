@@ -90,3 +90,63 @@ The quarantined fake ADB executable must never be rebuilt or executed locally.
 Full fixture/native acceptance remains hosted. A real-phone harness must invoke
 the actual supplied ADB directly and must not call `scripts/test-desktop.ps1`,
 which prepares the fake executable.
+
+## Real-phone harness
+
+`scripts/measure-transfer.ps1` uses the actual supplied ADB and native WebDriver
+actions. It has no fake/proxy ADB dependency. The separate pure test scripts can
+run locally without contacting a phone:
+
+```powershell
+pwsh -NoProfile -File scripts/transfer-benchmark/Core.test.ps1
+pwsh -NoProfile -File scripts/transfer-benchmark/Device.test.ps1
+pwsh -NoProfile -File scripts/transfer-benchmark/Ui.test.ps1
+```
+
+The runner requires absolute paths for ADB, tauri-driver 2.1.0, a matching
+EdgeDriver, FFmpeg and FFprobe. `-TrialRoot` must be a new `device-<GUID>` directory
+under this checkout's `test-results/transfer-performance`. `-Stage Baseline`
+compares `released` with `baseline`; `-Stage Compare` compares `baseline` with
+`candidate`. `-Manifest` defaults to `manifest.json` inside the trial. The existing
+profile must be closed before each owned native session. When using an elevated
+development shell, launch the runner with the existing
+`run-desktop-unprivileged.ps1` wrapper and an owned bootstrap script/output
+directory, rather than weakening WebView2 security or changing the user's account.
+
+`-Builds` is a private JSON file with `schema: 1` and the named build objects.
+Each build supplies `exe`, a full source `revision`, executable `sha256` and a
+`resources` array of `{path, sha256}` relative to the executable directory. Include
+`observer.apk` and all three `file-helper/<ABI>/takedock-files` binaries. The
+runner verifies their hashes before launch and requires identical helper bytes
+across compared builds.
+
+Preparation generates new short MP4 seeds and appends a valid `free` box of
+random, nonsparse bytes to reach the exact 500 MB/1 GB sizes. These padded
+containers model bulk file I/O, not a gigabyte of distinct decoded frames. Each
+full payload is hashed and decoded; backups remain immutable. Preparation pins
+the ABI helper to the chosen resource SHA and records unrelated-file identities
+and hashes before adding fixtures. It reserves space before allocation and
+rechecks it for each run. Every Move gets a newly journaled duplicate and never
+selects a reusable master or an unrelated file.
+
+UI timing brackets the native action and matching operation notice, not progress
+100%. Backend timing comes from its complete matching trace. A missed result,
+clock mismatch, warning, cancellation, failed byte check or incomplete diagnostic
+invalidates the run. Logs preserve the cause without calling it a fast success.
+Native UI observations are bounded at 100 ms plus actual WebDriver request cost,
+which enters the uncertainty budget. Build/watch coordination uses process events
+instead of repeatedly polling an unchanged remote build.
+
+Baseline calibration retains initial warm-ups and one released/instrumented pair
+per size/kind; its conservative uncertainty includes the largest observed paired
+UI difference. Candidate acceptance uses three alternating pairs per size/kind.
+Both total metrics must improve in every pair; median gains must exceed the larger
+within-build range and measured uncertainty. Only ambiguous groups with positive
+paired gains can receive two extra pairs; all earlier samples remain. There is
+no loop that reruns until a favorable result appears.
+
+Raw per-run profiles, traces, timing records, journals and decoded/hash-verified
+backups remain private. The runner checks published copies independently before
+removing those newly created temporary outputs; backups and reports stay. It
+restores settings only if they still match its last write, preserving unexpected
+versions for inspection. No observed difference is attributed to the user.

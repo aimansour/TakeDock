@@ -99,6 +99,13 @@ jobs:
       - run: cargo clippy --workspace --all-targets --features desktop --locked -- -D warnings
       - run: cargo test --workspace --locked
       - run: npm run desktop:build -- --no-bundle
+      - name: Transfer benchmark safety and measurement tests
+        shell: pwsh
+        run: |
+          foreach ($suite in @('Core', 'Device', 'Ui')) {
+            & pwsh -NoProfile -File "scripts/transfer-benchmark/$suite.test.ps1"
+            if ($LASTEXITCODE -ne 0) { throw "$suite transfer benchmark tests failed" }
+          }
       - run: ./scripts/check-updater.ps1
       - name: Four mandatory real release Desktop E2E cases
         run: |
