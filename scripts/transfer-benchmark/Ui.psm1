@@ -49,7 +49,15 @@ function Restore-TransferProfile {
     param([Parameter(Mandatory)][string]$Path,[AllowNull()][byte[]]$Before,[Parameter(Mandatory)][byte[]]$LastWritten)
     if(-not (Test-Path -LiteralPath $Path -PathType Leaf)){throw 'Profile disappeared; preserve its original snapshot.'}
     $actual=[IO.File]::ReadAllBytes($Path)
-    if([Convert]::ToBase64String($actual) -cne [Convert]::ToBase64String($LastWritten)){throw 'Profile changed outside harness; preserve both versions without replacing it.'}
+    if([Convert]::ToBase64String($actual) -cne [Convert]::ToBase64String($LastWritten)) {
+        $expected=[Text.Encoding]::UTF8.GetString($LastWritten) | ConvertFrom-Json -AsHashtable
+        $observed=[Text.Encoding]::UTF8.GetString($actual) | ConvertFrom-Json -AsHashtable
+        $same=$expected.Count -eq $observed.Count
+        foreach($key in $expected.Keys) {
+            if($key -cnotin $observed.Keys -or -not [object]::Equals($expected[$key],$observed[$key])){$same=$false}
+        }
+        if(-not $same){throw 'Profile values differ from harness expectations; preserve both versions without replacing them.'}
+    }
     if($null -eq $Before){Remove-Item -LiteralPath $Path}
     else {[IO.File]::WriteAllBytes($Path,$Before)}
 }

@@ -76,9 +76,12 @@ function Read-CompletedTrace([string]$Path,[string]$JobId) {
     }while($true)
 }
 function Invoke-BenchmarkRun([string]$BuildName,[long]$Bytes,[string]$Kind,[int]$Pair,[int]$Order,[bool]$Warmup) {
-    Assert-TransferTrialSpace -Trial $script:Trial
     $build=$script:BuildInfo[$BuildName]
     Assert-BenchmarkBuild $build
+    $events=@(Get-Content -LiteralPath $script:Trial.journal | ForEach-Object {$_ | ConvertFrom-Json -AsHashtable -DateKind String})
+    $saved=Get-TransferCompletedRun -Events $events -Build $BuildName -Sha256 $build.sha256 -Bytes $Bytes -Kind $Kind -Pair $Pair -Order $Order -Warmup $Warmup
+    if($null -ne $saved){Write-Host "Reusing journal-verified $BuildName $Kind $Bytes-byte result; no operation repeated.";return $saved}
+    Assert-TransferTrialSpace -Trial $script:Trial
     $runId=[guid]::NewGuid().ToString('N')
     $runRoot=Join-Path $TrialRoot "runs/$runId"
     $null=Assert-TransferLocalPath -Root $TrialRoot -Path $runRoot
@@ -141,7 +144,10 @@ function Invoke-BenchmarkRun([string]$BuildName,[long]$Bytes,[string]$Kind,[int]
                 }
             }
             if($prepared) {
-                try {Restore-TransferProfile -Path $settingsPath -Before $before -LastWritten $last}
+                try {
+                    Restore-TransferProfile -Path $settingsPath -Before $before -LastWritten $last
+                    Write-TransferJournal -Trial $script:Trial -Entry @{event='run_cleanup_complete';run_id=$runId}
+                }
                 catch {
                     if(Test-Path -LiteralPath $settingsPath){Copy-Item -LiteralPath $settingsPath -Destination (Join-Path $runRoot 'profile-unexpected.bin')}
                     throw

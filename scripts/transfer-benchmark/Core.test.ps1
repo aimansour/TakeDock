@@ -120,4 +120,13 @@ Test-TransferCase 'pinned native driver is identified by Cargo receipt without u
     $receipt | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath (Join-Path $root '.crates2.json')
     Assert-TransferReject {Assert-TransferDriverPin -Executable $exe}
 }
+Test-TransferCase 'resume reuses a verified settled run and refuses unresolved cleanup' {
+    $result=@{run_id='done';build='released';bytes='500000000';kind='copy';pair=0;order=0;warmup=$true;outcome='completed';valid=$true}
+    $events=@(@{event='run_planned';run=$result;build_sha256=('a'*64)},@{event='run_verified';result=$result})
+    Assert-TransferReject {Get-TransferCompletedRun -Events $events -Build released -Sha256 ('a'*64) -Bytes 500000000 -Kind copy -Pair 0 -Order 0 -Warmup $true}
+    $events+=@{event='run_cleanup_complete';run_id='done'}
+    $saved=Get-TransferCompletedRun -Events $events -Build released -Sha256 ('a'*64) -Bytes 500000000 -Kind copy -Pair 0 -Order 0 -Warmup $true
+    Assert-TransferTest ($saved.run_id -ceq 'done') 'Completed operation would be repeated.'
+    Assert-TransferReject {Get-TransferCompletedRun -Events $events -Build released -Sha256 ('b'*64) -Bytes 500000000 -Kind copy -Pair 0 -Order 0 -Warmup $true}
+}
 Write-Output "PASS: $script:Cases core benchmark cases."

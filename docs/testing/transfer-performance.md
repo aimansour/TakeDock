@@ -148,5 +148,14 @@ no loop that reruns until a favorable result appears.
 Raw per-run profiles, traces, timing records, journals and decoded/hash-verified
 backups remain private. The runner checks published copies independently before
 removing those newly created temporary outputs; backups and reports stay. It
-restores settings only if they still match its last write, preserving unexpected
-versions for inspection. No observed difference is attributed to the user.
+restores settings only if their exact key set and typed values still match its
+last write. The application reserializes settings on startup; equivalent JSON
+formatting/order is accepted, while a changed value/key/type is preserved for
+inspection. Original profile bytes are restored. No observed difference is
+attributed to the user.
+
+A resumed stage reuses a journaled completed operation only when its original
+build hash, run parameters, verified outcome and successful cleanup receipt all
+match. Unresolved cleanup stops the stage for explicit recovery rather than
+automatically repeating a mutation. An already completed warm-up is retained
+instead of transferring the same large file again.

@@ -33,4 +33,15 @@ Test-TransferCase 'profile restore preserves unexpected concurrent changes' {
     Restore-TransferProfile -Path $path -Before $before -LastWritten $last
     Assert-TransferTest ([Convert]::ToBase64String([IO.File]::ReadAllBytes($path)) -eq [Convert]::ToBase64String($before)) 'Original profile not restored.'
 }
+Test-TransferCase 'profile restore tolerates equivalent application serialization only' {
+    $root=New-TransferTestRoot
+    $path=Join-Path $root 'settings.json'
+    $before=[Text.Encoding]::UTF8.GetBytes('{"language":"ar","ready_sound":true}')
+    $last=[Text.Encoding]::UTF8.GetBytes('{"language":"en","ready_sound":true}')
+    [IO.File]::WriteAllText($path,"{`n  `"ready_sound`": true,`n  `"language`": `"en`"`n}")
+    Restore-TransferProfile -Path $path -Before $before -LastWritten $last
+    Assert-TransferTest ([Convert]::ToBase64String([IO.File]::ReadAllBytes($path)) -ceq [Convert]::ToBase64String($before)) 'Equivalent serialization was not restored.'
+    [IO.File]::WriteAllText($path,'{"language":"en","ready_sound":false}')
+    Assert-TransferReject {Restore-TransferProfile -Path $path -Before $before -LastWritten $last}
+}
 Write-Output "PASS: $script:Cases UI-measurement cases."

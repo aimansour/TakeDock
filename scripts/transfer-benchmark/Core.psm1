@@ -25,6 +25,19 @@ function Assert-TransferDriverPin {
     $matching=@($receipt.installs.Keys | Where-Object {$_ -match '^tauri-driver 2\.1\.0 \(registry\+https://github\.com/rust-lang/crates\.io-index\)$'})
     if($matching.Count -ne 1 -or [IO.Path]::GetFileName($Executable) -notin $receipt.installs[$matching[0]].bins){throw 'Pinned tauri-driver 2.1.0 Cargo receipt required.'}
 }
+function Get-TransferCompletedRun {
+    param([object[]]$Events,[string]$Build,[string]$Sha256,[long]$Bytes,[string]$Kind,[int]$Pair,[int]$Order,[bool]$Warmup)
+    $matches=@($Events | Where-Object {$_.event -eq 'run_verified'} | Where-Object {
+        $_.result.build -eq $Build -and [long]$_.result.bytes -eq $Bytes -and $_.result.kind -eq $Kind -and $_.result.pair -eq $Pair -and $_.result.order -eq $Order -and $_.result.warmup -eq $Warmup
+    })
+    if($matches.Count -eq 0){return $null}
+    if($matches.Count -ne 1){throw 'Repeated completed run in journal.'}
+    $result=$matches[0].result
+    $planned=@($Events | Where-Object {$_.event -eq 'run_planned' -and $_.run.run_id -ceq $result.run_id})
+    $cleanup=@($Events | Where-Object {$_.event -eq 'run_cleanup_complete' -and $_.run_id -ceq $result.run_id})
+    if($result.valid -ne $true -or $result.outcome -ne 'completed' -or $planned.Count -ne 1 -or $planned[0].build_sha256 -cne $Sha256 -or $cleanup.Count -ne 1){throw 'Existing completed operation needs explicit recovery; never retry its mutation.'}
+    return $result
+}
 
 function Read-TransferTrial {
     param([Parameter(Mandatory)][string]$Manifest,[Parameter(Mandatory)][string]$TrialRoot)
@@ -168,4 +181,4 @@ function Join-TransferRun {
     foreach($span in $Trace.spans){$result.stages[$span.stage]=$span.ms}
     return $result
 }
-Export-ModuleMember -Function Assert-TransferLocalPath,Read-TransferTrial,Get-TransferVerdict,Read-TransferTrace,Join-TransferRun,Assert-TransferDriverPin
+Export-ModuleMember -Function Assert-TransferLocalPath,Read-TransferTrial,Get-TransferVerdict,Read-TransferTrace,Join-TransferRun,Assert-TransferDriverPin,Get-TransferCompletedRun
