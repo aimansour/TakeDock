@@ -43,13 +43,13 @@
 
 ## File and interface map
 
-| Files | Responsibility |
-| --- | --- |
-| `src-tauri/src/transfer_trace.rs`, `src-tauri/{Cargo.toml,src/lib.rs,src/files.rs}` | Opt-in bounded diagnostics; serial baseline observations |
-| `scripts/measure-transfer.ps1`, `scripts/transfer-benchmark/*.psm1`, their pure tests and `docs/testing/transfer-performance.md` | Real-phone timing, preserved fixtures, verdict and safe resume |
-| `src-tauri/src/files/stream_copy.rs`, `src-tauri/src/files.rs` | Exact bounded write coalescing and existing worker integration |
-| `tests/fixtures/adb/{src/main.rs,tests/files.rs}`, `.github/workflows/ci.yml`, `tests/desktop/critical.e2e.ts` | Hosted buffered-tail/readback/collision regressions and the unchanged four native flows |
-| `docs/research/2026-10-22-transfer-performance.md`, `docs/testing/files.md`, `docs/architecture.md` | Sanitized measurements and final guarantees; bilingual user guidance only if behavior wording changes |
+| Files                                                                                                                            | Responsibility                                                                                        |
+| -------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
+| `src-tauri/src/transfer_trace.rs`, `src-tauri/{Cargo.toml,src/lib.rs,src/files.rs}`                                              | Opt-in bounded diagnostics; serial baseline observations                                              |
+| `scripts/measure-transfer.ps1`, `scripts/transfer-benchmark/*.psm1`, their pure tests and `docs/testing/transfer-performance.md` | Real-phone timing, preserved fixtures, verdict and safe resume                                        |
+| `src-tauri/src/files/stream_copy.rs`, `src-tauri/src/files.rs`                                                                   | Exact bounded write coalescing and existing worker integration                                        |
+| `tests/fixtures/adb/{src/main.rs,tests/files.rs}`, `.github/workflows/ci.yml`, `tests/desktop/critical.e2e.ts`                   | Hosted buffered-tail/readback/collision regressions and the unchanged four native flows               |
+| `docs/research/2026-10-22-transfer-performance.md`, `docs/testing/files.md`, `docs/architecture.md`                              | Sanitized measurements and final guarantees; bilingual user guidance only if behavior wording changes |
 
 ### Timing and benchmark contracts
 
