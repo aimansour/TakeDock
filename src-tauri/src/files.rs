@@ -16,6 +16,9 @@ use std::{
 };
 use takedock_files::{Entry, Identity};
 
+#[cfg(test)]
+mod stream_copy;
+
 pub fn quote(value: &str) -> Result<String, String> {
     if value.contains('\0') {
         return Err("invalid_argument".into());
