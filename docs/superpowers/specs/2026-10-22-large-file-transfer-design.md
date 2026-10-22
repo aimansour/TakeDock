@@ -139,6 +139,14 @@ its hash stage improved. Any streaming adjustment is judged by this same gate.
 
 ## Verification coordinator and resource ownership
 
+This section describes the conditional paired-hash candidate. If the baseline
+gate selects the approved narrow write-buffering fallback instead, retain the
+existing serial verification and its checks; apply the reviewed exact-byte,
+flush/error and cancellation barriers in the
+[buffering amendment](../plans/2026-10-22-transfer-buffering-amendment.md).
+The user approved that amendment as Native on 2026-10-22. It does not authorize
+combining candidates or changing the helper/transport protocol.
+
 Keep streaming, durable write and stored-size validation before verification.
 Preserve the post-transfer source stat. Start one phone-hash task and one
 desktop-readback task for that file; bound the concurrency to those two tasks and
