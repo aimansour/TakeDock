@@ -1,7 +1,7 @@
 # Measured large-file transfer improvements
 
 Date: 2026-10-22
-Status: conversational design approved; written specification awaiting user review.
+Status: written specification approved by the user on 2026-10-22; implementation plan review is next.
 Baseline: released v0.1.5, `75476b3c65a0c6719c5ac65c52490c5f9bef308d`.
 
 ## Intent and agreed outcome
