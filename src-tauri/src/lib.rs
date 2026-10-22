@@ -15,6 +15,7 @@ pub mod readiness;
 pub mod recording;
 pub mod session;
 pub mod settings;
+mod transfer_trace;
 #[cfg(feature = "desktop")]
 mod updates;
 pub mod windows;

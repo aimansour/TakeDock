@@ -1,7 +1,7 @@
 # Measured large-file transfer improvements
 
 Date: 2026-10-22
-Status: written specification approved by the user on 2026-10-22; implementation plan review is next.
+Status: specification and Native implementation plan approved by the user on 2026-10-22; execution in progress.
 Baseline: released v0.1.5, `75476b3c65a0c6719c5ac65c52490c5f9bef308d`.
 
 ## Intent and agreed outcome
@@ -273,6 +273,10 @@ closed except when the trial requires it. Preserve wireless pairing, the ADB
 server and its startup configuration; do not disconnect/unpair, kill the server
 or change connection/security settings for the benchmark. Leave the phone
 connected afterward.
+
+User amendment on 2026-10-22: after each phone session, including failures, leave
+Open Camera, return Home and put the screen to sleep. Do not leave the camera
+foreground between test stages; preserve pairing and the ADB server.
 
 ## Scope and review handoff
 

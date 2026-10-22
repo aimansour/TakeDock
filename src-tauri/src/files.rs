@@ -1,4 +1,5 @@
 use crate::session::{DeviceLease, EventSink};
+use crate::transfer_trace::{Edge, Stage, Trace, TraceKey};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{
@@ -177,6 +178,7 @@ struct Job {
     destination: PathBuf,
     new_stem: Option<String>,
     cancel: Arc<AtomicBool>,
+    trace: Trace,
 }
 enum Message {
     List(DeviceLease, mpsc::Sender<Result<Vec<Video>, String>>),
@@ -189,6 +191,7 @@ pub struct FileService {
     jobs: Arc<Mutex<HashMap<String, Arc<AtomicBool>>>>,
     worker: Mutex<Option<thread::JoinHandle<()>>>,
     sink: EventSink,
+    trace: Trace,
 }
 impl FileService {
     pub fn start_discard_delete(
@@ -292,10 +295,13 @@ impl FileService {
                     }
                     Message::Job(mut job) => {
                         sequence += 1;
+                        let key = TraceKey::new(&job.event.id, job.lease.generation, None);
+                        job.trace.mark(&key, Stage::Worker, Edge::Mark);
                         job.event.status = "running".into();
                         emit(&sink, &job.event);
-                        let result = remote
-                            .prepare(&job.lease)
+                        let result = job
+                            .trace
+                            .measure(&key, Stage::Prepare, || remote.prepare(&job.lease))
                             .and_then(|_| execute(&remote, &mut job, &sink, sequence));
                         job.event.status = if result.is_ok() {
                             "completed"
@@ -315,7 +321,9 @@ impl FileService {
                                 destination_name: None,
                             });
                         }
+                        job.trace.mark(&key, Stage::Terminal, Edge::Mark);
                         emit(&sink, &job.event);
+                        job.trace.complete_job(&key);
                         active.lock().unwrap().remove(&job.event.id);
                     }
                     Message::Stop => break,
@@ -327,6 +335,7 @@ impl FileService {
             jobs,
             worker: Mutex::new(Some(worker)),
             sink,
+            trace: Trace::from_env(),
         }
     }
     pub fn list(&self, lease: DeviceLease) -> Result<Vec<Video>, String> {
@@ -344,6 +353,7 @@ impl FileService {
         destination: PathBuf,
         new_stem: Option<String>,
     ) -> Result<String, String> {
+        let accepted_at = self.trace.stamp();
         if videos.is_empty() || videos.len() > 10_000 {
             return Err("invalid_selection".into());
         }
@@ -376,6 +386,9 @@ impl FileService {
             return Err("session_replaced".into());
         }
         let id = uuid::Uuid::new_v4().to_string();
+        let key = TraceKey::new(&id, lease.generation, None);
+        self.trace
+            .record_at(&key, Stage::Accepted, Edge::Mark, accepted_at);
         let cancel = Arc::new(AtomicBool::new(false));
         let event = JobEvent {
             discard_operation_id: None,
@@ -397,6 +410,7 @@ impl FileService {
         };
         self.jobs.lock().unwrap().insert(id.clone(), cancel.clone());
         let queued = event.clone();
+        let enqueued_at = self.trace.stamp();
         if self
             .sender
             .try_send(Message::Job(Box::new(Job {
@@ -406,12 +420,15 @@ impl FileService {
                 destination,
                 new_stem,
                 cancel,
+                trace: self.trace.clone(),
             })))
             .is_err()
         {
             self.jobs.lock().unwrap().remove(&id);
             return Err("file_queue_full".into());
         }
+        self.trace
+            .record_at(&key, Stage::Enqueued, Edge::Mark, enqueued_at);
         emit(&self.sink, &queued);
         Ok(id)
     }
@@ -485,7 +502,8 @@ pub(crate) fn hash_path(path: &Path) -> Result<String, String> {
 }
 fn execute(remote: &Remote, job: &mut Job, sink: &EventSink, sequence: u64) -> Result<(), String> {
     let mut failure = None;
-    for video in job.videos.clone() {
+    for (file_index, video) in job.videos.clone().into_iter().enumerate() {
+        let key = TraceKey::new(&job.event.id, job.lease.generation, Some(file_index));
         if check(job).is_err() {
             job.event.results.push(FileResult {
                 name: video.name.clone(),
@@ -514,7 +532,8 @@ fn execute(remote: &Remote, job: &mut Job, sink: &EventSink, sequence: u64) -> R
             }
             .into();
             emit(sink, &job.event);
-            remote.stat(&job.lease, &video)?;
+            job.trace
+                .measure(&key, Stage::InitialStat, || remote.stat(&job.lease, &video))?;
             match job.event.kind {
                 JobKind::Copy | JobKind::Move => {
                     let destination = job.destination.join(&video.name);
@@ -526,43 +545,66 @@ fn execute(remote: &Remote, job: &mut Job, sink: &EventSink, sequence: u64) -> R
                         .suffix(".partial")
                         .tempfile_in(&job.destination)
                         .map_err(err)?;
-                    stream(
-                        remote,
-                        job,
-                        &video,
-                        partial.as_file().try_clone().map_err(err)?,
-                        sink,
-                    )?;
+                    job.trace.measure(&key, Stage::Stream, || {
+                        stream(
+                            remote,
+                            job,
+                            &video,
+                            partial.as_file().try_clone().map_err(err)?,
+                            sink,
+                        )
+                    })?;
                     check(job)?;
                     job.event.bytes = video.size;
                     job.event.phase = "verifying".into();
                     emit(sink, &job.event);
-                    partial.as_file().sync_all().map_err(err)?;
-                    if partial.as_file().metadata().map_err(err)?.len() != video.size {
+                    job.trace
+                        .measure(&key, Stage::Sync, || partial.as_file().sync_all())
+                        .map_err(err)?;
+                    let stored_size = job
+                        .trace
+                        .measure(&key, Stage::StoredSize, || partial.as_file().metadata())
+                        .map_err(err)?
+                        .len();
+                    if stored_size != video.size {
                         return Err("copy_size_mismatch".into());
                     }
-                    remote.stat(&job.lease, &video)?;
-                    let expected = String::from_utf8(remote.job_output(
-                        job,
-                        &["hash", &video.name, &video.identity],
-                        600_000,
-                    )?)
-                    .map_err(err)?;
-                    if expected.trim() != hash_path(partial.path())? {
+                    job.trace.measure(&key, Stage::PostTransferStat, || {
+                        remote.stat(&job.lease, &video)
+                    })?;
+                    let verification_span = job.trace.span(&key, Stage::Verify);
+                    let expected =
+                        String::from_utf8(job.trace.measure(&key, Stage::RemoteHash, || {
+                            remote.job_output(job, &["hash", &video.name, &video.identity], 600_000)
+                        })?)
+                        .map_err(err)?;
+                    if expected.trim()
+                        != job
+                            .trace
+                            .measure(&key, Stage::LocalHash, || hash_path(partial.path()))?
+                    {
                         return Err("copy_hash_mismatch".into());
                     }
+                    drop(verification_span);
                     check(job)?;
-                    partial.persist_noclobber(&destination).map_err(err)?;
+                    job.trace
+                        .measure(&key, Stage::Publish, || {
+                            partial.persist_noclobber(&destination)
+                        })
+                        .map_err(err)?;
                     if job.event.kind == JobKind::Move {
                         job.event.phase = "deleting".into();
                         emit(sink, &job.event);
                         check(job)?;
-                        remote.stat(&job.lease, &video)?;
-                        remote.job_output(
-                            job,
-                            &["delete", &video.name, &video.identity],
-                            30_000,
-                        )?;
+                        job.trace
+                            .measure(&key, Stage::MoveStat, || remote.stat(&job.lease, &video))?;
+                        job.trace.measure(&key, Stage::Delete, || {
+                            remote.job_output(
+                                job,
+                                &["delete", &video.name, &video.identity],
+                                30_000,
+                            )
+                        })?;
                     }
                 }
                 JobKind::Delete => {
@@ -605,6 +647,7 @@ fn execute(remote: &Remote, job: &mut Job, sink: &EventSink, sequence: u64) -> R
                 }
             }
             if job.event.kind != JobKind::Copy {
+                let _index_span = job.trace.span(&key, Stage::Index);
                 let mut names = vec![video.name.clone()];
                 if job.event.kind == JobKind::Rename {
                     names.push(renamed(&video.name, job.new_stem.as_deref().unwrap())?);

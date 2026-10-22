@@ -21,6 +21,7 @@ required-features = ["desktop"]
 
 [features]
 default = []
+transfer-diagnostics = []
 desktop = ["dep:tauri", "dep:tauri-build", "dep:tauri-plugin-dialog", "dep:tauri-plugin-updater", "dep:tauri-plugin-single-instance"]
 custom-protocol = ["tauri/custom-protocol"]
 

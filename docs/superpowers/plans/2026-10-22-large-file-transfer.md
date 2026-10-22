@@ -10,7 +10,7 @@
 
 **Spec:** [2026-10-22-large-file-transfer-design.md](../specs/2026-10-22-large-file-transfer-design.md), approved on 2026-10-22.
 
-**Execution:** Native, already selected by the user. This is a written plan awaiting review; approval of the specification permits this planning stage only.
+**Execution:** Native; plan approved by the user on 2026-10-22. Execute inline with one fresh whole-branch review at the end.
 
 ## Global Constraints
 
@@ -26,6 +26,7 @@
 - "The external fake-ADB executable remains quarantined locally: do not restore, rebuild, rename, exclude or run it locally, including through WSL." Full fixture/workspace/native acceptance runs on GitHub; never locally run the existing `scripts/test-desktop.ps1` or `cargo test --workspace`.
 - "Preserve wireless pairing, the ADB server and its startup configuration; do not disconnect/unpair, kill the server or change connection/security settings for the benchmark."
 - "Never reuse earlier private journals/backups as scratch space or select personal media." Use a fresh ignored trial; keep installed TakeDock closed except for owned test sessions.
+- User amendment on 2026-10-22: after every physical-phone session, leave Open Camera, return Home and put the screen to sleep in cleanup, including failures. Keep it out of the camera while building/waiting between test stages; preserve pairing/server.
 - Compatible updates remain authorized; retain locked dependencies unless a concrete compatibility/security issue needs a focused adjustment. Installer/pairing UI, trimming, broader audit, framed helper streams and release publication remain outside this plan.
 - Work only in the existing managed worktree `C:/Users/abdullah/.codex/worktrees/current-take-discard/TakeDock`; leave `C:/chatgpt/TakeDock` untouched. Before execution use `superpowers:using-git-worktrees` to verify/reuse it. Preserve all old workspaces/backups. Do not inspect other chats.
 - Use process completion notifications and bounded waits for hosted builds; no repeated unchanged polling. Distinguish private benchmark artifacts from sanitized committed evidence.
