@@ -181,4 +181,12 @@ function Join-TransferRun {
     foreach($span in $Trace.spans){$result.stages[$span.stage]=$span.ms}
     return $result
 }
-Export-ModuleMember -Function Assert-TransferLocalPath,Read-TransferTrial,Get-TransferVerdict,Read-TransferTrace,Join-TransferRun,Assert-TransferDriverPin,Get-TransferCompletedRun
+function Get-TransferRunPaths {
+    param([Parameter(Mandatory)][string]$TrialRoot,[Parameter(Mandatory)][string]$RunId,[Parameter(Mandatory)][string]$RemoteName)
+    if($RunId -cnotmatch '^[a-f0-9]{32}$' -or $RemoteName -cne [IO.Path]::GetFileName($RemoteName)){throw 'Invalid owned run path components.'}
+    $runRoot=Assert-TransferLocalPath -Root $TrialRoot -Path (Join-Path $TrialRoot ('runs/'+$RunId.Substring(0,16)))
+    $destination=Join-Path $runRoot 'd'
+    if((Join-Path $destination $RemoteName).Length -ge 260){throw 'Trial root is too long for native Windows publication; no device mutation permitted.'}
+    return @{root=$runRoot;destination=$destination}
+}
+Export-ModuleMember -Function Assert-TransferLocalPath,Read-TransferTrial,Get-TransferVerdict,Read-TransferTrace,Join-TransferRun,Assert-TransferDriverPin,Get-TransferCompletedRun,Get-TransferRunPaths

@@ -83,14 +83,14 @@ function Invoke-BenchmarkRun([string]$BuildName,[long]$Bytes,[string]$Kind,[int]
     if($null -ne $saved){Write-Host "Reusing journal-verified $BuildName $Kind $Bytes-byte result; no operation repeated.";return $saved}
     Assert-TransferTrialSpace -Trial $script:Trial
     $runId=[guid]::NewGuid().ToString('N')
-    $runRoot=Join-Path $TrialRoot "runs/$runId"
-    $null=Assert-TransferLocalPath -Root $TrialRoot -Path $runRoot
-    $null=New-Item -ItemType Directory -Path $runRoot
-    $destination=Join-Path $runRoot 'destination'
-    $null=New-Item -ItemType Directory -Path $destination
     $master=@($script:Trial.fixtures | Where-Object {$_.role -eq 'master' -and [long]$_.bytes -eq $Bytes})
     if($master.Count -ne 1){throw 'Owned master payload is missing/ambiguous.'}
     $fixture=$master[0]
+    $remoteName=if($Kind -eq 'move'){"TDPerf-$($script:Trial.trial_id)-move-$runId.mp4"}else{$fixture.remote_name}
+    $paths=Get-TransferRunPaths -TrialRoot $TrialRoot -RunId $runId -RemoteName $remoteName
+    $runRoot=$paths.root;$destination=$paths.destination
+    $null=New-Item -ItemType Directory -Path $runRoot
+    $null=New-Item -ItemType Directory -Path $destination
     if($Kind -eq 'move') {
         $fixture=Add-TransferPhoneFixture -Trial $script:Trial -Id "move-$runId" -Backup $fixture.backup -Role move_duplicate -FfmpegPath $FfmpegPath
         $script:Trial | ConvertTo-Json -Depth 25 | Set-Content -LiteralPath $Manifest

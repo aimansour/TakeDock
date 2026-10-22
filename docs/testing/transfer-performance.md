@@ -159,3 +159,12 @@ build hash, run parameters, verified outcome and successful cleanup receipt all
 match. Unresolved cleanup stops the stage for explicit recovery rather than
 automatically repeating a mutation. An already completed warm-up is retained
 instead of transferring the same large file again.
+
+Per-run evidence directories use the first 16 hexadecimal digits of the run GUID
+and an exclusive directory creation; the journal retains the complete GUID and
+maps it to its exact destination. This keeps fixture publication paths under the
+legacy Windows 260-character boundary. The full prospective destination is
+checked before creating a phone duplicate, so an excessively long checkout path
+fails preparation instead of wasting a complete transfer. An authoritative
+terminal snapshot is saved privately after the UI timestamp, including rejected
+outcomes, to distinguish a product failure from observation failure.

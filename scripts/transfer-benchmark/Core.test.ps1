@@ -129,4 +129,16 @@ Test-TransferCase 'resume reuses a verified settled run and refuses unresolved c
     Assert-TransferTest ($saved.run_id -ceq 'done') 'Completed operation would be repeated.'
     Assert-TransferReject {Get-TransferCompletedRun -Events $events -Build released -Sha256 ('b'*64) -Bytes 500000000 -Kind copy -Pair 0 -Order 0 -Warmup $true}
 }
+Test-TransferCase 'native benchmark publication paths fit legacy Windows limits before any device mutation' {
+    $temporary=New-TransferTestRoot
+    $root=Join-Path $temporary ('r'*([math]::Max(1,140-$temporary.Length-1)))
+    New-Item -ItemType Directory -Path $root | Out-Null
+    $id=[guid]::NewGuid().ToString('N')
+    $name='TDPerf-'+('a'*32)+'-move-'+$id+'.mp4'
+    $paths=Get-TransferRunPaths -TrialRoot $root -RunId $id -RemoteName $name
+    Assert-TransferTest ((Join-Path $paths.destination $name).Length -lt 260) 'Benchmark creates an unpublishable Windows path.'
+    $tooLong=Join-Path $root ('x'*100)
+    Assert-TransferReject {Get-TransferRunPaths -TrialRoot $tooLong -RunId $id -RemoteName $name}
+    Assert-TransferReject {Get-TransferRunPaths -TrialRoot $root -RunId '../escape' -RemoteName $name}
+}
 Write-Output "PASS: $script:Cases core benchmark cases."
