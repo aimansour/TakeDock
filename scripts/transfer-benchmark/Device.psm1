@@ -115,6 +115,12 @@ function Get-TransferAccessibility {
         services=(Invoke-TransferAdb -Trial $Trial -Arguments @('shell','settings','get','secure','enabled_accessibility_services')).Trim()
     }
 }
+function Assert-TransferAccessibilityPreserved {
+    param([hashtable]$Trial,[hashtable]$Before)
+    $after=Get-TransferAccessibility -Trial $Trial
+    Write-TransferJournal -Trial $Trial -Entry @{event='stage_accessibility_verified';before=$Before;after=$after;unchanged=($after.enabled -ceq $Before.enabled -and $after.services -ceq $Before.services)}
+    if($after.enabled -cne $Before.enabled -or $after.services -cne $Before.services){throw 'Accessibility changed during this stage; observations retained without restoring settings.'}
+}
 function Get-TransferUnrelatedSnapshot {
     param([Parameter(Mandatory)][hashtable]$Trial)
     $listing=Invoke-TransferHelper -Trial $Trial -Arguments @('list')
@@ -151,19 +157,49 @@ function Assert-TransferTrialSpace([hashtable]$Trial) {
     Assert-TransferCapacity -AvailableBytes $drive.AvailableFreeSpace -RequiredBytes 6000000000
     Assert-TransferCapacity -AvailableBytes (Get-TransferDeviceSpace $Trial) -RequiredBytes 1500000000
 }
+function Copy-TransferPhoneFixture {
+    param([hashtable]$Trial,[string]$SourceFixtureId,[hashtable]$Fixture)
+    Assert-TransferBackup -Trial $Trial -Fixture $Fixture
+    $masters=@($Trial.fixtures | Where-Object id -CEQ $SourceFixtureId)
+    if($masters.Count -ne 1 -or $masters[0].role -cne 'master'){throw 'One owned master is required.'}
+    $master=$masters[0]
+    if($Fixture.role -cne 'move_duplicate' -or $Fixture.id -notmatch '^move-[a-f0-9]{32}$' -or $Fixture.remote_name -cne "TDPerf-$($Trial.trial_id)-$($Fixture.id).mp4" -or @($Trial.fixtures | Where-Object id -CEQ $Fixture.id).Count -ne 0 -or $Fixture.remote_name -ceq $master.remote_name){throw 'Fresh owned Move duplicate required.'}
+    if($Fixture.bytes -cne $master.bytes -or $Fixture.sha256 -cne $master.sha256){throw 'Duplicate metadata differs from preserved master.'}
+    $null=Assert-TransferSource -Trial $Trial -FixtureId $SourceFixtureId
+    if($Trial.helper_path -notmatch '^/data/local/tmp/takedock-files-[a-f0-9]{64}$' -and $null -eq $script:AdbAdapter){throw 'Helper is not digest-pinned.'}
+    Write-TransferJournal -Trial $Trial -Entry @{event='copy_planned';creation_method='identity_bound_on_phone_read';source_fixture_id=$SourceFixtureId;fixture=$Fixture}
+    $target=Quote-TransferShell ('/sdcard/DCIM/OpenCamera/'+$Fixture.remote_name)
+    $guard="test ! -e $target && test ! -L $target"
+    $null=Invoke-TransferAdb -Trial $Trial -Arguments @('shell','-T',$guard)
+    $read=(@(Quote-TransferShell $Trial.helper_path)+@('read',$master.remote_name,$master.source_identity | ForEach-Object {Quote-TransferShell $_})) -join ' '
+    $null=Invoke-TransferAdb -Trial $Trial -Arguments @('shell','-T',"$guard && (set -C; $read > $target)")
+    $identity=Invoke-TransferHelper -Trial $Trial -Arguments @('stat',$Fixture.remote_name)
+    $metadata=$identity | ConvertFrom-Json -AsHashtable
+    $original=$master.source_identity | ConvertFrom-Json -AsHashtable
+    if([long]$metadata.size -ne [long]$Fixture.bytes -or ($metadata.device -eq $original.device -and $metadata.inode -eq $original.inode)){throw 'Duplicate does not have a fresh exact-size identity.'}
+    $digest=Invoke-TransferHelper -Trial $Trial -Arguments @('hash',$Fixture.remote_name,$identity)
+    if($digest -cne $Fixture.sha256 -or (Invoke-TransferHelper -Trial $Trial -Arguments @('stat',$Fixture.remote_name)) -cne $identity){throw 'Duplicate failed full digest/identity verification.'}
+    return $identity
+}
 function Add-TransferPhoneFixture {
-    param([hashtable]$Trial,[string]$Id,[string]$Backup,[string]$Role,[string]$FfmpegPath)
+    param([hashtable]$Trial,[string]$Id,[string]$Backup,[string]$Role,[string]$FfmpegPath,[string]$SourceFixtureId)
     $name="TDPerf-$($Trial.trial_id)-$Id.mp4"
     $fixture=@{id=$Id;remote_name=$name;backup=$Backup;role=$Role;bytes=[string](Get-Item -LiteralPath $Backup).Length;sha256=(Get-FileHash -LiteralPath $Backup -Algorithm SHA256).Hash.ToLowerInvariant();decoded=$false;source_identity=''}
     & $FfmpegPath -nostdin -v error -i $Backup -map 0 -f null - *> $null
     if($LASTEXITCODE -ne 0){throw 'Fixture full decode failed.'}
     $fixture.decoded=$true
-    Write-TransferJournal -Trial $Trial -Entry @{event='push_planned';fixture=$fixture}
-    $remote='/sdcard/DCIM/OpenCamera/'+$name
-    $quoted=Quote-TransferShell $remote
-    $null=Invoke-TransferAdb -Trial $Trial -Arguments @('shell','-T',"test ! -e $quoted && test ! -L $quoted")
-    $null=Invoke-TransferAdb -Trial $Trial -Arguments @('push',$Backup,$remote)
-    $fixture.source_identity=Invoke-TransferHelper -Trial $Trial -Arguments @('stat',$name)
+    if($SourceFixtureId) {
+        $fixture.creation_method='identity_bound_on_phone_read'
+        $fixture.source_identity=Copy-TransferPhoneFixture -Trial $Trial -SourceFixtureId $SourceFixtureId -Fixture $fixture
+    } else {
+        $fixture.creation_method='adb_push'
+        Write-TransferJournal -Trial $Trial -Entry @{event='push_planned';fixture=$fixture}
+        $remote='/sdcard/DCIM/OpenCamera/'+$name
+        $quoted=Quote-TransferShell $remote
+        $null=Invoke-TransferAdb -Trial $Trial -Arguments @('shell','-T',"test ! -e $quoted && test ! -L $quoted")
+        $null=Invoke-TransferAdb -Trial $Trial -Arguments @('push',$Backup,$remote)
+        $fixture.source_identity=Invoke-TransferHelper -Trial $Trial -Arguments @('stat',$name)
+    }
     $Trial.fixtures=@($Trial.fixtures)+@($fixture)
     $null=Assert-TransferSource -Trial $Trial -FixtureId $Id
     Write-TransferJournal -Trial $Trial -Entry @{event='fixture_ready';fixture=$fixture}
@@ -222,4 +258,4 @@ function Complete-TransferTrial {
     }
     if($errors.Count){throw 'Phone cleanup could not confirm Home and screen sleep; connection may be unavailable.'}
 }
-Export-ModuleMember -Function Invoke-TransferAdb,Invoke-TransferHelper,Assert-TransferCapacity,Assert-TransferSource,New-TransferFixture,Prepare-TransferTrial,Complete-TransferTrial,Write-TransferJournal,Add-TransferPhoneFixture,Assert-TransferTrialSpace,Get-TransferUnrelatedSnapshot,Assert-TransferUnrelatedPreserved,Get-TransferConditions,Get-TransferAccessibility
+Export-ModuleMember -Function Invoke-TransferAdb,Invoke-TransferHelper,Assert-TransferCapacity,Assert-TransferSource,New-TransferFixture,Prepare-TransferTrial,Complete-TransferTrial,Write-TransferJournal,Add-TransferPhoneFixture,Assert-TransferTrialSpace,Get-TransferUnrelatedSnapshot,Assert-TransferUnrelatedPreserved,Get-TransferConditions,Get-TransferAccessibility,Assert-TransferAccessibilityPreserved

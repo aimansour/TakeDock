@@ -87,4 +87,111 @@ Test-TransferCase 'NUL listing preserves leading whitespace in an unrelated name
     $snapshot=@(Get-TransferUnrelatedSnapshot -Trial $trial)
     Assert-TransferTest ($snapshot[0].name -ceq " personal'clip.mp4") 'Listing trimmed an unrelated filename.'
 }
+
+
+function New-CloneCase([string]$Mode='valid') {
+    $trial=New-TransferTestTrial (New-TransferTestRoot)
+    $master=$trial.fixtures[0]
+    $target=@{}+$master
+    $target.id='move-0123456789abcdef0123456789abcdef'
+    $target.remote_name="TDPerf-$($trial.trial_id)-$($target.id).mp4"
+    $target.role='move_duplicate';$target.source_identity=''
+    $state=@{mode=$Mode;calls=[Collections.Generic.List[string]]::new();reads=0;target=$target;master=$master;identity='{"device":1,"inode":3,"size":4,"modified_ns":2,"changed_ns":2}'}
+    & (Get-Module Device) {param($state)
+        $script:AdbAdapter={param($trial,$arguments)
+            $command=$arguments -join ' ';$state.calls.Add($command)
+            if($command -match "'read'") {
+                $state.reads++
+                if($state.mode -eq 'read_failed'){throw 'Owned helper read failed.'}
+                if(-not $command.Contains('set -C') -or -not $command.Contains(' > ') -or -not $command.Contains($state.master.source_identity) -or -not $command.Contains($state.master.remote_name) -or -not $command.Contains($state.target.remote_name)){throw 'Missing exclusive identity-bound creation.'}
+                $events=@(Get-Content $trial.journal | ForEach-Object {$_ | ConvertFrom-Json -AsHashtable})
+                if(@($events | Where-Object event -EQ copy_planned).Count -ne 1){throw 'Creation was not journaled before read.'}
+                return ''
+            }
+            if($command -match 'test ! -e') {if($state.mode -eq 'collision'){throw 'Target already exists.'};return ''}
+            if($command -match "'stat'") {
+                if($command.Contains($state.master.remote_name)) {if($state.mode -eq 'replacement'){return $state.identity};return $state.master.source_identity}
+                if($command.Contains($state.target.remote_name)){return $state.identity}
+            }
+            if($command -match "'hash'") {
+                if($command.Contains($state.target.remote_name) -and $state.mode -eq 'wrong_digest'){return '0'*64}
+                return $state.master.sha256
+            }
+            throw 'Unexpected external operation.'
+        }.GetNewClosure()
+    } $state
+    return @{trial=$trial;target=$target;state=$state}
+}
+function Invoke-OwnedClone([hashtable]$Case) {
+    return & (Get-Module Device) {param($trial,$target) Copy-TransferPhoneFixture -Trial $trial -SourceFixtureId master-500 -Fixture $target} $Case.trial $Case.target
+}
+Test-TransferCase 'on-phone duplicate returns only verified fresh identity after exclusive owned creation' {
+    $case=New-CloneCase
+    $identity=Invoke-OwnedClone $case
+    Assert-TransferTest ($identity -ceq '{"device":1,"inode":3,"size":4,"modified_ns":2,"changed_ns":2}') 'Unverified duplicate identity returned.'
+    Assert-TransferTest ($case.state.reads -eq 1) 'Copy retried or missing.'
+    Assert-TransferTest (@($case.state.calls | Where-Object {$_ -match '^push|delete|rename'}).Count -eq 0) 'Preparation changed transport or source.'
+    Assert-TransferTest ($case.trial.fixtures.Count -eq 1) 'Private clone mutated manifest before caller verification.'
+}
+Test-TransferCase 'source replacement prevents on-phone creation' {
+    $case=New-CloneCase replacement
+    Assert-TransferReject {Invoke-OwnedClone $case}
+    Assert-TransferTest ($case.state.reads -eq 0) 'Replacement was copied.'
+}
+Test-TransferCase 'changed backup bytes prevent any device access for duplicate preparation' {
+    $case=New-CloneCase
+    [IO.File]::WriteAllBytes($case.target.backup,[byte[]](4,3,2,1))
+    Assert-TransferReject {Invoke-OwnedClone $case}
+    Assert-TransferTest ($case.state.calls.Count -eq 0) 'Bad backup reached device.'
+}
+Test-TransferCase 'existing duplicate target is retained without a read retry' {
+    $case=New-CloneCase collision
+    Assert-TransferReject {Invoke-OwnedClone $case}
+    Assert-TransferTest ($case.state.reads -eq 0) 'Existing target overwritten.'
+}
+Test-TransferCase 'failed helper acknowledgement cannot produce a ready duplicate or retry' {
+    $case=New-CloneCase read_failed
+    Assert-TransferReject {Invoke-OwnedClone $case}
+    Assert-TransferTest ($case.state.reads -eq 1) 'Failed mutation retried.'
+    Assert-TransferTest (@($case.state.calls | Where-Object {$_ -match "'stat'" -and $_.Contains($case.target.remote_name)}).Count -eq 0) 'Failed copy was treated as acknowledged.'
+}
+Test-TransferCase 'wrong duplicate digest cannot return a selectable identity' {
+    $case=New-CloneCase wrong_digest
+    Assert-TransferReject {Invoke-OwnedClone $case}
+    Assert-TransferTest ($case.state.reads -eq 1) 'Digest failure retried mutation.'
+}
+Test-TransferCase 'master aliases unowned names and inconsistent backup metadata prevent duplicate creation' {
+    foreach($change in @('alias','unowned','role','bytes','digest','existing_id')) {
+        $case=New-CloneCase
+        switch($change) {
+            alias {$case.target.id=$case.trial.fixtures[0].id;$case.target.remote_name=$case.trial.fixtures[0].remote_name}
+            unowned {$case.target.remote_name='personal.mp4'}
+            role {$case.trial.fixtures[0].role='move_duplicate'}
+            bytes {$case.target.bytes='5'}
+            digest {$case.target.sha256='0'*64}
+            existing_id {$case.trial.fixtures+=@(@{}+$case.target)}
+        }
+        Assert-TransferReject {Invoke-OwnedClone $case}
+        Assert-TransferTest ($case.state.reads -eq 0) "Unsafe target reached read: $change"
+    }
+}
+
+Test-TransferCase 'stage accessibility preservation uses its current baseline without restoring old settings' {
+    $trial=New-TransferTestTrial (New-TransferTestRoot)
+    $trial.accessibility_before=@{enabled='1';services='old.service'}
+    $state=@{enabled='0';services='null';commands=[Collections.Generic.List[string]]::new()}
+    & (Get-Module Device) {param($state)
+        $script:AdbAdapter={param($trial,$arguments)
+            $command=$arguments -join ' ';$state.commands.Add($command)
+            if($command -ceq 'shell settings get secure accessibility_enabled'){return $state.enabled}
+            if($command -ceq 'shell settings get secure enabled_accessibility_services'){return $state.services}
+            throw 'Unexpected write or operation.'
+        }.GetNewClosure()
+    } $state
+    $before=Get-TransferAccessibility -Trial $trial
+    Assert-TransferAccessibilityPreserved -Trial $trial -Before $before
+    $state.services='new.service'
+    Assert-TransferReject {Assert-TransferAccessibilityPreserved -Trial $trial -Before $before}
+    Assert-TransferTest ($trial.accessibility_before.services -ceq 'old.service' -and $state.services -ceq 'new.service') 'Old or current accessibility settings were overwritten.'
+}
 Write-Output "PASS: $script:Cases device-preservation cases."

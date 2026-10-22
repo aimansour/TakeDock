@@ -129,6 +129,14 @@ and hashes before adding fixtures. It reserves space before allocation and
 rechecks it for each run. Every Move gets a newly journaled duplicate and never
 selects a reusable master or an unrelated file.
 
+Comparison Move duplicates are created on the phone from the owned master using
+the unchanged, identity-bound helper `read` and an exclusively created (`set -C`)
+fresh target. The runner verifies the decoded local backup, master identity and
+full digest first, journals creation, refuses existing/symlink targets and verifies
+the new target's full digest and fresh identity before selection. Failed creation
+is never retried automatically. Initial masters still use real ADB push. This
+preparation is identical for both comparison builds and outside timed intervals.
+
 UI timing brackets the native action and matching operation notice, not progress
 100%. Backend timing comes from its complete matching trace. A missed result,
 clock mismatch, warning, cancellation, failed byte check or incomplete diagnostic
@@ -145,6 +153,13 @@ within-build range and measured uncertainty. Only ambiguous groups with positive
 paired gains can receive two extra pairs; all earlier samples remain. There is
 no loop that reruns until a favorable result appears.
 
+A predeclared futility stop ends candidate trials after the first valid matched
+pair with no strict improvement in either total. Because every retained pair must
+improve, later measurements cannot rescue acceptance. The report marks this as a
+rejected partial matrix and lists unrun cells; it never accepts an incomplete
+matrix. Positive but ambiguous groups can still receive the two allowed extra
+pairs, retaining every earlier result.
+
 Raw per-run profiles, traces, timing records, journals and decoded/hash-verified
 backups remain private. The runner checks published copies independently before
 removing those newly created temporary outputs; backups and reports stay. It
@@ -159,6 +174,11 @@ build hash, run parameters, verified outcome and successful cleanup receipt all
 match. Unresolved cleanup stops the stage for explicit recovery rather than
 automatically repeating a mutation. An already completed warm-up is retained
 instead of transferring the same large file again.
+
+Comparison receipts are scoped to `Compare`, so calibration warm-ups are not
+silently reused across stages. Each invocation snapshots current accessibility
+services and verifies they remain unchanged at its end, without changing settings
+or restoring the original trial's older values. Earlier observations are retained.
 
 Per-run evidence directories use the first 16 hexadecimal digits of the run GUID
 and an exclusive directory creation; the journal retains the complete GUID and

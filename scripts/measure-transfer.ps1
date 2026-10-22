@@ -79,7 +79,8 @@ function Invoke-BenchmarkRun([string]$BuildName,[long]$Bytes,[string]$Kind,[int]
     $build=$script:BuildInfo[$BuildName]
     Assert-BenchmarkBuild $build
     $events=@(Get-Content -LiteralPath $script:Trial.journal | ForEach-Object {$_ | ConvertFrom-Json -AsHashtable -DateKind String})
-    $saved=Get-TransferCompletedRun -Events $events -Build $BuildName -Sha256 $build.sha256 -Bytes $Bytes -Kind $Kind -Pair $Pair -Order $Order -Warmup $Warmup
+    $receiptStage=if($Stage -eq 'Compare'){'Compare'}else{''}
+    $saved=Get-TransferCompletedRun -Events $events -Build $BuildName -Sha256 $build.sha256 -Bytes $Bytes -Kind $Kind -Pair $Pair -Order $Order -Warmup $Warmup -Stage $receiptStage
     if($null -ne $saved){Write-Host "Reusing journal-verified $BuildName $Kind $Bytes-byte result; no operation repeated.";return $saved}
     Assert-TransferTrialSpace -Trial $script:Trial
     $runId=[guid]::NewGuid().ToString('N')
@@ -92,10 +93,10 @@ function Invoke-BenchmarkRun([string]$BuildName,[long]$Bytes,[string]$Kind,[int]
     $null=New-Item -ItemType Directory -Path $runRoot
     $null=New-Item -ItemType Directory -Path $destination
     if($Kind -eq 'move') {
-        $fixture=Add-TransferPhoneFixture -Trial $script:Trial -Id "move-$runId" -Backup $fixture.backup -Role move_duplicate -FfmpegPath $FfmpegPath
+        $fixture=Add-TransferPhoneFixture -Trial $script:Trial -Id "move-$runId" -Backup $fixture.backup -Role move_duplicate -FfmpegPath $FfmpegPath -SourceFixtureId $master[0].id
         $script:Trial | ConvertTo-Json -Depth 25 | Set-Content -LiteralPath $Manifest
     }
-    $run=@{run_id=$runId;build=$BuildName;bytes=[string]$Bytes;kind=$Kind;pair=$Pair;order=$Order;warmup=$Warmup;fixture_id=$fixture.id;destination=$destination}
+    $run=@{run_id=$runId;stage=$Stage;build=$BuildName;bytes=[string]$Bytes;kind=$Kind;pair=$Pair;order=$Order;warmup=$Warmup;fixture_id=$fixture.id;destination=$destination}
     Get-TransferConditions -Trial $script:Trial | ConvertTo-Json -Depth 15 | Set-Content -LiteralPath (Join-Path $runRoot 'conditions-before.json')
     Write-TransferJournal -Trial $script:Trial -Entry @{event='run_planned';run=$run;build_revision=$build.revision;build_sha256=$build.sha256}
     $settingsPath=Join-Path $env:APPDATA 'app.takedock/settings.json'
@@ -116,6 +117,7 @@ function Invoke-BenchmarkRun([string]$BuildName,[long]$Bytes,[string]$Kind,[int]
         $ui=Invoke-TransferRun -Session $session -Trial $script:Trial -Run $run
         $trace=if($tracePath){Read-CompletedTrace -Path $tracePath -JobId $ui.job_id}else{$null}
         $result=Join-TransferRun -UiResult $ui -Trace $trace
+        $result.stage=$Stage
         $output=Assert-TransferLocalPath -Root $TrialRoot -Path (Join-Path $destination $fixture.remote_name)
         if((Get-Item -LiteralPath $output).Length -ne $Bytes -or (Get-FileHash -LiteralPath $output -Algorithm SHA256).Hash.ToLowerInvariant() -cne $fixture.sha256){throw 'Published output failed independent verification.'}
         if($Kind -eq 'copy'){$null=Assert-TransferSource -Trial $script:Trial -FixtureId $fixture.id}
@@ -207,14 +209,25 @@ try {
         $script:Trial=Prepare-TransferTrial -TrialRoot $TrialRoot -AdbPath $AdbPath -Serial $Serial -Seeds $seeds -Resources (Split-Path $script:BuildInfo.baseline.exe -Parent) -FfmpegPath $FfmpegPath
     }
     if($script:Trial.serial -cne $Serial -or $script:Trial.adb_path -cne $AdbPath){throw 'Existing trial belongs to another device/ADB selection.'}
+    $stageAccessibility=Get-TransferAccessibility -Trial $script:Trial
+    Write-TransferJournal -Trial $script:Trial -Entry @{event='stage_started';stage=$Stage;accessibility=$stageAccessibility}
     $results=[Collections.Generic.List[object]]::new()
+    $futility=@{stop=$false;matched_pairs=0;failures=@()}
     $pairs=if($Stage -eq 'Baseline'){1}else{3}
-    foreach($bytes in @(500000000,1000000000)) {
+    :matrix foreach($bytes in @(500000000,1000000000)) {
         foreach($kind in @('copy','move')) {
             foreach($name in $buildNames){$results.Add((Invoke-BenchmarkRun -BuildName $name -Bytes $bytes -Kind $kind -Pair 0 -Order 0 -Warmup $true))}
             for($pair=1;$pair -le $pairs;$pair++) {
                 $order=if($pair % 2){$buildNames}else{@($buildNames[1],$buildNames[0])}
                 for($i=0;$i -lt 2;$i++) {$results.Add((Invoke-BenchmarkRun -BuildName $order[$i] -Bytes $bytes -Kind $kind -Pair $pair -Order $i -Warmup $false))}
+                if($Stage -eq 'Compare') {
+                    $futility=Get-TransferFutility -Runs $results.ToArray()
+                    if($futility.stop) {
+                        Write-TransferJournal -Trial $script:Trial -Entry @{event='comparison_futility_stop';decision=$futility}
+                        Write-Host 'Candidate rejected by a retained non-improving pair; remaining comparison cells will be reported unrun.'
+                        break matrix
+                    }
+                }
             }
         }
     }
@@ -231,20 +244,34 @@ try {
     } else {
         $calibration=Get-Content -LiteralPath (Join-Path $TrialRoot 'baseline.json') -Raw | ConvertFrom-Json -AsHashtable
         $verdict=Get-TransferVerdict -Runs $results.ToArray() -UncertaintyMs $calibration.instrumentation_uncertainty_ms
-        foreach($group in @($verdict.groups | Where-Object {-not $_.accepted})) {
+        :extra foreach($group in @($verdict.groups | Where-Object {-not $_.accepted})) {
+            if($futility.stop){break}
             if($group.metrics.Count -eq 0){continue}
             if(@($group.metrics.Values | ForEach-Object {$_.paired_differences} | Where-Object {$_ -le 0}).Count){continue}
             foreach($pair in @(4,5)) {
                 $order=if($pair % 2){$buildNames}else{@($buildNames[1],$buildNames[0])}
                 for($i=0;$i -lt 2;$i++){$results.Add((Invoke-BenchmarkRun -BuildName $order[$i] -Bytes ([long]$group.bytes) -Kind $group.kind -Pair $pair -Order $i -Warmup $false))}
+                $futility=Get-TransferFutility -Runs $results.ToArray()
+                if($futility.stop){Write-TransferJournal -Trial $script:Trial -Entry @{event='comparison_futility_stop';decision=$futility};break extra}
             }
         }
         $verdict=Get-TransferVerdict -Runs $results.ToArray() -UncertaintyMs $calibration.instrumentation_uncertainty_ms
-        @{stage='compare';verdict=$verdict;runs=$results.ToArray()} | ConvertTo-Json -Depth 40 | Set-Content -LiteralPath (Join-Path $TrialRoot 'comparison.json')
+        if($futility.stop -and $verdict.accepted){throw 'Futility must never accept an incomplete or non-improving comparison.'}
+        $unrun=@(foreach($bytes in @('500000000','1000000000')) {
+            foreach($kind in @('copy','move')) {
+                foreach($name in $buildNames) {
+                    foreach($pair in @(0,1,2,3)) {
+                        $warmup=($pair -eq 0)
+                        if(@($results | Where-Object {$_.bytes -ceq $bytes -and $_.kind -ceq $kind -and $_.build -ceq $name -and $_.pair -eq $pair -and $_.warmup -eq $warmup}).Count -eq 0){@{bytes=$bytes;kind=$kind;build=$name;pair=$pair;warmup=$warmup;status='unrun'}}
+                    }
+                }
+            }
+        })
+        $decision=if($futility.stop){'rejected_futility'}elseif($verdict.accepted){'accepted'}else{'rejected'}
+        @{stage='compare';decision=$decision;futility=$futility;unrun_cells=$unrun;verdict=$verdict;runs=$results.ToArray();accessibility_baseline=$stageAccessibility} | ConvertTo-Json -Depth 40 | Set-Content -LiteralPath (Join-Path $TrialRoot 'comparison.json')
     }
     Assert-TransferUnrelatedPreserved -Trial $script:Trial
-    $accessibility=Get-TransferAccessibility -Trial $script:Trial
-    if($accessibility.enabled -cne $script:Trial.accessibility_before.enabled -or $accessibility.services -cne $script:Trial.accessibility_before.services){throw 'Observed accessibility state differs from current trial baseline; retain both observations without restoring stale values.'}
+    Assert-TransferAccessibilityPreserved -Trial $script:Trial -Before $stageAccessibility
     Write-Output "PASS: $Stage trial recorded privately; screen cleanup and pairing preservation apply."
 } finally {
     if($script:Trial){Complete-TransferTrial -Trial $script:Trial}

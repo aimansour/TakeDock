@@ -141,4 +141,59 @@ Test-TransferCase 'native benchmark publication paths fit legacy Windows limits 
     Assert-TransferReject {Get-TransferRunPaths -TrialRoot $tooLong -RunId $id -RemoteName $name}
     Assert-TransferReject {Get-TransferRunPaths -TrialRoot $root -RunId '../escape' -RemoteName $name}
 }
+
+function New-FutilityPair([double]$Backend=90,[double]$Ui=91) {
+    return @(@{build='baseline';bytes='500000000';kind='copy';pair=1;order=0;warmup=$false;valid=$true;outcome='completed';backend_ms=100;ui_ms=101;observation_uncertainty_ms=1},@{build='candidate';bytes='500000000';kind='copy';pair=1;order=1;warmup=$false;valid=$true;outcome='completed';backend_ms=$Backend;ui_ms=$Ui;observation_uncertainty_ms=1})
+}
+Test-TransferCase 'one positive measured pair continues without claiming acceptance' {
+    $decision=Get-TransferFutility -Runs (New-FutilityPair)
+    Assert-TransferTest (-not $decision.stop -and $decision.matched_pairs -eq 1) 'Positive pair stopped or no pair matched.'
+    Assert-TransferTest (-not $decision.ContainsKey('accepted')) 'Partial futility decision masqueraded as acceptance.'
+}
+Test-TransferCase 'any equal or slower backend or native UI total permanently rejects candidate' {
+    foreach($times in @(@(100,91),@(110,91),@(90,101),@(90,110))) {
+        $decision=Get-TransferFutility -Runs (New-FutilityPair $times[0] $times[1])
+        Assert-TransferTest ($decision.stop -and $decision.matched_pairs -eq 1 -and $decision.failures.Count -ge 1) 'Non-improving pair did not stop.'
+    }
+}
+Test-TransferCase 'a later positive pair never erases an earlier valid non-improving pair' {
+    $runs=@(New-FutilityPair 110 91)
+    $next=@(New-FutilityPair 50 51)
+    $next[0].pair=2;$next[0].order=1;$next[1].pair=2;$next[1].order=0
+    $decision=Get-TransferFutility -Runs @($runs+$next)
+    Assert-TransferTest ($decision.stop -and $decision.matched_pairs -eq 2) 'Earlier failure disappeared.'
+}
+Test-TransferCase 'warmups cannot trigger futility or stand in for measured pairs' {
+    $runs=@(New-FutilityPair 200 201)
+    foreach($run in $runs){$run.warmup=$true;$run.pair=0}
+    $decision=Get-TransferFutility -Runs $runs
+    Assert-TransferTest (-not $decision.stop -and $decision.matched_pairs -eq 0) 'Warmup decided measured outcome.'
+}
+Test-TransferCase 'incomplete mismatched duplicate invalid and nonfinite pairs are refused as evidence' {
+    foreach($change in @('incomplete','group','pair','duplicate','order','failed','nan','negative')) {
+        $runs=@(New-FutilityPair)
+        switch($change) {
+            incomplete {$runs=@($runs[0])}
+            group {$runs[1].kind='move'}
+            pair {$runs[1].pair=2}
+            duplicate {$runs+=@($runs[0])}
+            order {$runs[1].order=0}
+            failed {$runs[1].valid=$false;$runs[1].outcome='failed'}
+            nan {$runs[1].backend_ms=[double]::NaN}
+            negative {$runs[1].ui_ms=-1}
+        }
+        Assert-TransferReject {Get-TransferFutility -Runs $runs}
+    }
+}
+
+Test-TransferCase 'comparison receipt scope never reuses old calibration warmups' {
+    $result=@{run_id='done';build='baseline';bytes='500000000';kind='copy';pair=0;order=0;warmup=$true;outcome='completed';valid=$true}
+    $events=@(@{event='run_planned';run=$result;build_sha256=('a'*64)},@{event='run_verified';result=$result},@{event='run_cleanup_complete';run_id='done'})
+    $saved=Get-TransferCompletedRun -Events $events -Build baseline -Sha256 ('a'*64) -Bytes 500000000 -Kind copy -Pair 0 -Order 0 -Warmup $true -Stage Compare
+    Assert-TransferTest ($null -eq $saved) 'Calibration warmup crossed comparison stage.'
+    $result.stage='Compare'
+    $saved=Get-TransferCompletedRun -Events $events -Build baseline -Sha256 ('a'*64) -Bytes 500000000 -Kind copy -Pair 0 -Order 0 -Warmup $true -Stage Compare
+    Assert-TransferTest ($saved.run_id -ceq 'done') 'A settled comparison would repeat.'
+    Assert-TransferReject {Get-TransferCompletedRun -Events $events -Build baseline -Sha256 ('b'*64) -Bytes 500000000 -Kind copy -Pair 0 -Order 0 -Warmup $true -Stage Compare}
+}
 Write-Output "PASS: $script:Cases core benchmark cases."

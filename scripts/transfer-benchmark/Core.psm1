@@ -26,9 +26,9 @@ function Assert-TransferDriverPin {
     if($matching.Count -ne 1 -or [IO.Path]::GetFileName($Executable) -notin $receipt.installs[$matching[0]].bins){throw 'Pinned tauri-driver 2.1.0 Cargo receipt required.'}
 }
 function Get-TransferCompletedRun {
-    param([object[]]$Events,[string]$Build,[string]$Sha256,[long]$Bytes,[string]$Kind,[int]$Pair,[int]$Order,[bool]$Warmup)
+    param([object[]]$Events,[string]$Build,[string]$Sha256,[long]$Bytes,[string]$Kind,[int]$Pair,[int]$Order,[bool]$Warmup,[string]$Stage)
     $matches=@($Events | Where-Object {$_.event -eq 'run_verified'} | Where-Object {
-        $_.result.build -eq $Build -and [long]$_.result.bytes -eq $Bytes -and $_.result.kind -eq $Kind -and $_.result.pair -eq $Pair -and $_.result.order -eq $Order -and $_.result.warmup -eq $Warmup
+        $_.result.build -eq $Build -and [long]$_.result.bytes -eq $Bytes -and $_.result.kind -eq $Kind -and $_.result.pair -eq $Pair -and $_.result.order -eq $Order -and $_.result.warmup -eq $Warmup -and (-not $Stage -or ($_.result.ContainsKey('stage') -and $_.result.stage -ceq $Stage))
     })
     if($matches.Count -eq 0){return $null}
     if($matches.Count -ne 1){throw 'Repeated completed run in journal.'}
@@ -114,6 +114,30 @@ function Get-TransferVerdict {
     return @{accepted=($reasons.Count -eq 0);groups=$groups.ToArray();reasons=$reasons.ToArray()}
 }
 
+function Get-TransferFutility {
+    param([Parameter(Mandatory)][AllowEmptyCollection()][object[]]$Runs)
+    $measured=@($Runs | Where-Object {-not $_.warmup})
+    foreach($run in $measured) {
+        if($run.build -cnotin @('baseline','candidate') -or [string]$run.bytes -cnotin @('500000000','1000000000') -or $run.kind -cnotin @('copy','move') -or [int]$run.pair -notin @(1,2,3,4,5) -or $run.valid -ne $true -or $run.outcome -cne 'completed'){throw 'Invalid measured comparison evidence.'}
+        foreach($metric in @('backend_ms','ui_ms','observation_uncertainty_ms')) {
+            if($null -eq $run[$metric] -or -not [double]::IsFinite([double]$run[$metric]) -or [double]$run[$metric] -lt 0){throw 'Invalid measured comparison total.'}
+        }
+        $expected=if(([int]$run.pair % 2 -eq 1) -eq ($run.build -ceq 'baseline')){0}else{1}
+        if($run.order -ne $expected){throw 'Comparison pair order did not alternate.'}
+    }
+    $failures=[Collections.Generic.List[object]]::new();$pairs=0
+    foreach($group in @($measured | Group-Object {"$($_.bytes)/$($_.kind)/$($_.pair)"})) {
+        $baseline=@($group.Group | Where-Object build -CEQ baseline)
+        $candidate=@($group.Group | Where-Object build -CEQ candidate)
+        if($baseline.Count -ne 1 -or $candidate.Count -ne 1){throw 'Incomplete, mismatched or duplicate pair cannot decide futility.'}
+        $pairs++
+        foreach($metric in @('backend_ms','ui_ms')) {
+            if([double]$candidate[0][$metric] -ge [double]$baseline[0][$metric]){$failures.Add(@{bytes=$baseline[0].bytes;kind=$baseline[0].kind;pair=$baseline[0].pair;metric=$metric;baseline_ms=$baseline[0][$metric];candidate_ms=$candidate[0][$metric]})}
+        }
+    }
+    return @{stop=($failures.Count -gt 0);matched_pairs=$pairs;failures=$failures.ToArray()}
+}
+
 function Read-TransferTrace {
     param([Parameter(Mandatory)][string]$Path,[Parameter(Mandatory)][string]$JobId)
     $rows=@(Get-Content -LiteralPath $Path | Where-Object {$_} | ForEach-Object {ConvertFrom-Json -InputObject $_ -AsHashtable})
@@ -189,4 +213,4 @@ function Get-TransferRunPaths {
     if((Join-Path $destination $RemoteName).Length -ge 260){throw 'Trial root is too long for native Windows publication; no device mutation permitted.'}
     return @{root=$runRoot;destination=$destination}
 }
-Export-ModuleMember -Function Assert-TransferLocalPath,Read-TransferTrial,Get-TransferVerdict,Read-TransferTrace,Join-TransferRun,Assert-TransferDriverPin,Get-TransferCompletedRun,Get-TransferRunPaths
+Export-ModuleMember -Function Assert-TransferLocalPath,Read-TransferTrial,Get-TransferVerdict,Read-TransferTrace,Join-TransferRun,Assert-TransferDriverPin,Get-TransferCompletedRun,Get-TransferRunPaths,Get-TransferFutility

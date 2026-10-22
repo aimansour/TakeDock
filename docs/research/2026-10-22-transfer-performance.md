@@ -1,7 +1,8 @@
 # Large-file transfer measurements
 
-Date: 2026-10-22. Status: baseline calibration complete; no performance
-optimization has been accepted or implemented.
+Date: 2026-10-22. Status: baseline calibration and candidate safety checks complete;
+the bounded write-buffering candidate awaits physical comparison. No performance
+improvement has been accepted.
 
 ## Method and artifact provenance
 
@@ -13,11 +14,13 @@ stage durations. Both clocks use the same Windows host frequency. Warm-ups,
 invalid attempts and measured pairs are retained separately. No incoming-stream
 digest replaces stored-file readback.
 
-| Artifact                                   | Source revision                            | Executable SHA-256                                                 |
-| ------------------------------------------ | ------------------------------------------ | ------------------------------------------------------------------ |
-| Public v0.1.5                              | `75476b3c65a0c6719c5ac65c52490c5f9bef308d` | `4a4863d1a6cc1aa72f49ba24c37abb29283cd62f2202b644a0b564388c8ffaef` |
-| Serial baseline, diagnostics enabled       | `74e1d556fc5a32f9beea42bbb1d094f48c95726a` | `0d6224f97abd49a0dec876ec7276e14bb53913853c20a270f9bb36ed4b28bc3b` |
-| Serial baseline, default build (preserved) | `74e1d556fc5a32f9beea42bbb1d094f48c95726a` | `76f469abbbda2debb92c1198fefb77445610517c627c5689faca2c921832d524` |
+| Artifact                                      | Source revision                            | Executable SHA-256                                                 |
+| --------------------------------------------- | ------------------------------------------ | ------------------------------------------------------------------ |
+| Public v0.1.5                                 | `75476b3c65a0c6719c5ac65c52490c5f9bef308d` | `4a4863d1a6cc1aa72f49ba24c37abb29283cd62f2202b644a0b564388c8ffaef` |
+| Serial baseline, diagnostics enabled          | `74e1d556fc5a32f9beea42bbb1d094f48c95726a` | `0d6224f97abd49a0dec876ec7276e14bb53913853c20a270f9bb36ed4b28bc3b` |
+| Serial baseline, default build (preserved)    | `74e1d556fc5a32f9beea42bbb1d094f48c95726a` | `76f469abbbda2debb92c1198fefb77445610517c627c5689faca2c921832d524` |
+| Buffered candidate, diagnostics enabled       | `50c4969e769d660fdfda8792c4ebe8acd3d3b260` | `234d67a527de0503a2d6d11ba12818c18ac75a92f375307ee485786e487f541b` |
+| Buffered candidate, default build (preserved) | `50c4969e769d660fdfda8792c4ebe8acd3d3b260` | `1dc32ed4673ce2fe11055c788a65c79e273cf37c8726f15068b3f323ec7a795e` |
 
 Host executables were frozen before subsequent harness-only fixes. Local ignored
 helper resource bytes differed from the public release despite matching tracked
