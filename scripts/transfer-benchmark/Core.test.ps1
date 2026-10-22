@@ -196,4 +196,27 @@ Test-TransferCase 'comparison receipt scope never reuses old calibration warmups
     Assert-TransferTest ($saved.run_id -ceq 'done') 'A settled comparison would repeat.'
     Assert-TransferReject {Get-TransferCompletedRun -Events $events -Build baseline -Sha256 ('b'*64) -Bytes 500000000 -Kind copy -Pair 0 -Order 0 -Warmup $true -Stage Compare}
 }
+
+Test-TransferCase 'failed stage preservation cannot leave an accepted timing report' {
+ $report=@{decision='accepted';verdict=@{accepted=$true;reasons=@()};runs=@(@{valid=$true;ui_ms=100;backend_ms=90})}
+ Set-TransferComparisonStageStatus -Report $report -Valid $false -Reason 'Accessibility changed during stage.'
+ Assert-TransferTest (-not $report.stage_valid -and $report.decision -ceq 'invalid_stage' -and -not $report.verdict.accepted) 'Invalid environment still accepted.'
+ Assert-TransferTest ($report.stage_invalid_reason -ceq 'Accessibility changed during stage.' -and $report.runs[0].ui_ms -eq 100 -and $report.runs[0].valid) 'Raw byte/clock observations were rewritten or reason lost.'
+ Assert-TransferReject {Set-TransferComparisonStageStatus -Report $report -Valid $true}
+}
+Test-TransferCase 'successful stage preservation retains a truthful rejected timing verdict' {
+ $report=@{decision='rejected_futility';verdict=@{accepted=$false;reasons=@('Non-improving pair')};runs=@()}
+ Set-TransferComparisonStageStatus -Report $report -Valid $true
+ Assert-TransferTest ($report.stage_valid -and $report.decision -ceq 'rejected_futility' -and -not $report.verdict.accepted) 'Preservation replaced the timing rejection.'
+}
+Test-TransferCase 'invalid stage requires a preserved diagnostic reason' {
+ $report=@{decision='accepted';verdict=@{accepted=$true;reasons=@()};runs=@()}
+ Assert-TransferReject {Set-TransferComparisonStageStatus -Report $report -Valid $false -Reason ''}
+}
+
+Test-TransferCase 'settled operations from an invalid stage never resume as valid performance evidence' {
+ $result=@{run_id='done';stage='Compare';build='baseline';bytes='500000000';kind='copy';pair=0;order=0;warmup=$true;outcome='completed';valid=$true}
+ $events=@(@{event='run_planned';run=$result;build_sha256=('a'*64)},@{event='run_verified';result=$result},@{event='run_cleanup_complete';run_id='done'},@{event='stage_invalid';stage='Compare';run_ids=@('done');reason='Services changed'})
+ Assert-TransferReject {Get-TransferCompletedRun -Events $events -Build baseline -Sha256 ('a'*64) -Bytes 500000000 -Kind copy -Pair 0 -Order 0 -Warmup $true -Stage Compare}
+}
 Write-Output "PASS: $script:Cases core benchmark cases."

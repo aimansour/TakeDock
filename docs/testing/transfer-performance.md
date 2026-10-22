@@ -179,6 +179,10 @@ Comparison receipts are scoped to `Compare`, so calibration warm-ups are not
 silently reused across stages. Each invocation snapshots current accessibility
 services and verifies they remain unchanged at its end, without changing settings
 or restoring the original trial's older values. Earlier observations are retained.
+Stage validity is committed only after preservation checks and final Home/sleep
+cleanup succeed. A failed stage remains explicitly invalid, cannot leave an
+accepted verdict and cannot resume its settled operations as valid evidence;
+its raw timing/byte receipts remain available for diagnosis.
 
 Per-run evidence directories use the first 16 hexadecimal digits of the run GUID
 and an exclusive directory creation; the journal retains the complete GUID and

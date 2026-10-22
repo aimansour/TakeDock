@@ -193,6 +193,7 @@ if(-not $Serial) {
     $Serial=($connected[0] -split '\s+')[0]
 }
 $script:Trial=$null
+$comparisonReport=$null
 try {
     if(Test-Path -LiteralPath $Manifest) {$script:Trial=Read-TransferTrial -Manifest $Manifest -TrialRoot $TrialRoot}
     else {
@@ -268,11 +269,33 @@ try {
             }
         })
         $decision=if($futility.stop){'rejected_futility'}elseif($verdict.accepted){'accepted'}else{'rejected'}
-        @{stage='compare';decision=$decision;futility=$futility;unrun_cells=$unrun;verdict=$verdict;runs=$results.ToArray();accessibility_baseline=$stageAccessibility} | ConvertTo-Json -Depth 40 | Set-Content -LiteralPath (Join-Path $TrialRoot 'comparison.json')
+        $comparisonReport=@{stage='compare';stage_valid=$false;stage_invalid_reason='Preservation checks pending.';decision=$decision;futility=$futility;unrun_cells=$unrun;verdict=$verdict;runs=$results.ToArray();accessibility_baseline=$stageAccessibility}
+        $comparisonReport | ConvertTo-Json -Depth 40 | Set-Content -LiteralPath (Join-Path $TrialRoot 'comparison.json')
     }
     Assert-TransferUnrelatedPreserved -Trial $script:Trial
     Assert-TransferAccessibilityPreserved -Trial $script:Trial -Before $stageAccessibility
-    Write-Output "PASS: $Stage trial recorded privately; screen cleanup and pairing preservation apply."
+} catch {
+    if($script:Trial){Write-TransferJournal -Trial $script:Trial -Entry @{event='stage_invalid';stage=$Stage;reason=$_.Exception.Message;run_ids=@(if($null -ne $comparisonReport){$comparisonReport.runs | ForEach-Object {$_.run_id}})}}
+    if($null -ne $comparisonReport) {
+        Set-TransferComparisonStageStatus -Report $comparisonReport -Valid $false -Reason $_.Exception.Message
+        $comparisonReport | ConvertTo-Json -Depth 40 | Set-Content -LiteralPath (Join-Path $TrialRoot 'comparison.json')
+    }
+    throw
 } finally {
-    if($script:Trial){Complete-TransferTrial -Trial $script:Trial}
+    if($script:Trial) {
+        try {Complete-TransferTrial -Trial $script:Trial}
+        catch {
+            Write-TransferJournal -Trial $script:Trial -Entry @{event='stage_invalid';stage=$Stage;reason=$_.Exception.Message;run_ids=@(if($null -ne $comparisonReport){$comparisonReport.runs | ForEach-Object {$_.run_id}})}
+            if($null -ne $comparisonReport) {
+                Set-TransferComparisonStageStatus -Report $comparisonReport -Valid $false -Reason $_.Exception.Message
+                $comparisonReport | ConvertTo-Json -Depth 40 | Set-Content -LiteralPath (Join-Path $TrialRoot 'comparison.json')
+            }
+            throw
+        }
+    }
 }
+if($null -ne $comparisonReport) {
+    Set-TransferComparisonStageStatus -Report $comparisonReport -Valid $true
+    $comparisonReport | ConvertTo-Json -Depth 40 | Set-Content -LiteralPath (Join-Path $TrialRoot 'comparison.json')
+}
+Write-Output "PASS: $Stage trial recorded privately; screen cleanup and pairing preservation confirmed."

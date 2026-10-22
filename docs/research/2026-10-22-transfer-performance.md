@@ -1,8 +1,6 @@
 # Large-file transfer measurements
 
-Date: 2026-10-22. Status: baseline calibration and candidate safety checks complete;
-the bounded write-buffering candidate awaits physical comparison. No performance
-improvement has been accepted.
+Date: 2026-10-22. Status: baseline complete; buffering candidate unaccepted and removed. Its comparison stage failed accessibility stability. All observations are retained, with no causal speed claim. The product retains serial transfer and verification, plus opt-in development diagnostics.
 
 ## Method and artifact provenance
 
@@ -149,3 +147,101 @@ Raw invalid attempts, decoded immutable backups, original and aligned runtime
 bundles, exact hashes, conditions, settings and journals are retained privately.
 The baseline report does not establish cold-cache performance or a universal
 wireless speed. No production deletion step gained video decoding or test backups.
+
+## Buffered candidate comparison
+
+Recorded decision: **invalid_stage**. Clock/byte-verified observations: 4; recorded measured pairs: 1; mandatory cells explicitly unrun: 28. Warm-ups do not count as matched evidence. All durations below are milliseconds.
+
+| Sample | Bytes / kind     | Phase / pair / order | Build     | Native UI ms | Backend ms | Stream ms | Verification ms |
+| ------ | ---------------- | -------------------- | --------- | -----------: | ---------: | --------: | --------------: |
+| C1     | 500000000 / copy | warm-up / 0 / 0      | baseline  |     171792.7 |   171697.2 |  167844.3 |          3401.0 |
+| C2     | 500000000 / copy | warm-up / 0 / 0      | candidate |     147947.1 |   147792.7 |  143337.9 |          4185.5 |
+| C3     | 500000000 / copy | measured / 1 / 0     | baseline  |     146174.6 |   146063.9 |  142185.6 |          3510.7 |
+| C4     | 500000000 / copy | measured / 1 / 1     | candidate |     256935.3 |   256791.7 |  252800.9 |          3540.2 |
+
+| Sample | Queue / prepare ms | Request-to-accept / terminal-to-visible ms | Sync ms | Phone hash / stored readback ms | Publish ms | Move stat / delete / index ms |
+| ------ | -----------------: | -----------------------------------------: | ------: | ------------------------------: | ---------: | ----------------------------: |
+| C1     |          0.0 / 0.0 |                                69.7 / 25.8 |     2.3 |                  864.8 / 2536.2 |        0.9 |                     — / — / — |
+| C2     |          0.0 / 0.0 |                               44.7 / 109.6 |     0.8 |                  960.2 / 3225.3 |        2.6 |                     — / — / — |
+| C3     |          0.4 / 0.5 |                                56.2 / 54.5 |     3.9 |                  937.0 / 2573.7 |        1.9 |                     — / — / — |
+| C4     |          0.0 / 0.0 |                               41.7 / 102.0 |     6.6 |                  936.9 / 2603.3 |        2.5 |                     — / — / — |
+
+| Bytes / kind      | Retained measured pairs | Metric     | Baseline median / range ms | Candidate median / range ms | Median gain ms |
+| ----------------- | ----------------------: | ---------- | -------------------------: | --------------------------: | -------------: |
+| 500000000 / copy  |                       1 | backend_ms |             146063.9 / 0.0 |              256791.7 / 0.0 |      -110727.8 |
+| 500000000 / copy  |                       1 | ui_ms      |             146174.6 / 0.0 |              256935.3 / 0.0 |      -110760.7 |
+| 500000000 / move  |                       0 | both       |                      unrun |                       unrun |              — |
+| 1000000000 / copy |                       0 | both       |                      unrun |                       unrun |              — |
+| 1000000000 / move |                       0 | both       |                      unrun |                       unrun |              — |
+
+Incomplete groups are rejected regardless of their apparent median. A one-pair range of zero is a mathematical description of one observation, not evidence of repeatability. The acceptance uncertainty remains 43374.1807 ms, increased if a native observation has a larger bound.
+
+| Bytes / kind      | Completed warm-ups | Completed mandatory measured cells | Explicitly unrun mandatory cells |
+| ----------------- | -----------------: | ---------------------------------: | -------------------------------: |
+| 500000000 / copy  |              2 / 2 |                              2 / 6 |                            4 / 8 |
+| 500000000 / move  |              0 / 2 |                              0 / 6 |                            8 / 8 |
+| 1000000000 / copy |              0 / 2 |                              0 / 6 |                            8 / 8 |
+| 1000000000 / move |              0 / 2 |                              0 / 6 |                            8 / 8 |
+
+Maximum observed native polling/request uncertainty in this comparison: 265.0 ms. Trace correlation and independent output size/full SHA checks passed for every retained run, with matching settings/owned-process cleanup receipts. The stage failed accessibility stability, so these timings do not establish a controlled or causal speed difference. All earlier observations are retained.
+
+The stage began with phone accessibility services disabled and ended with TalkBack
+enabled. The cause is unknown. No accessibility setting was restored or attributed
+to a person or application. The post-stage guard correctly exited with failure;
+the entire comparison is **invalid as controlled performance evidence**, even
+though every retained file operation has complete matching clocks, byte/hash
+checks and cleanup receipts. The raw timing rule had already stopped at the first
+non-improving pair. The later preservation failure is recorded separately and
+supersedes any interpretation of those raw differences as a controlled regression.
+
+The harness now records explicit stage validity and its failure reason, never
+leaves an accepted verdict after failed preservation, and refuses to resume
+completed operations belonging to an invalid stage. Tests observed RED then GREEN
+for both the invalid-stage verdict and invalid-stage resume boundaries. The
+original pre-invalidation comparison is retained privately alongside the corrected
+stage status; measurements were not rewritten or rerun until favorable.
+
+The candidate does not meet the declared acceptance gate. Its production buffer
+and private copier were removed; the final serial transfer implementation exactly
+matches the pre-candidate source. Stored-partial corruption, destination collision,
+held-prefix cancellation, actual stored-file hash, publication and source deletion
+safeguards remain covered. The archived candidate's successful zero-tail and
+write-count tests remain historical experiment evidence, not final-runtime claims.
+No larger protocol or transport change was adopted without a separate design.
+
+## Preparation and preservation outcome
+
+Comparison receipts use their own stage and fresh warm-ups; they do not reuse
+calibration observations from hours earlier. Current-stage accessibility values
+are captured before work and checked afterwards. The older trial snapshot remains
+private evidence, without restoration of stale values. Current settings snapshots
+are restored only after exact typed-value/key equality, with original bytes
+preserved. The observed phone-service drift is reported independently of the
+desktop settings restoration, which passed for all four operations.
+
+No Move comparison was run. A separate real-phone preparation probe, outside all
+performance intervals, created one 500000000-byte owned duplicate through the
+unchanged digest-pinned helper `read` with exclusive shell redirection. Backup
+size/SHA/full decode and exact master identity/hash guarded creation; fresh target
+identity and full SHA guarded selection. Preparation, including its checks, took
+19614.5 ms. This is **not a Copy/Move performance sample or a product speed claim**.
+After another full identity/hash/backup guard, only that new owned duplicate was
+deleted and its absence acknowledged. The original master, decoded immutable
+backup and unrelated identities/hashes were verified again. This probe also
+observed stable current accessibility services.
+
+Every native run closed its owned app/driver processes and restored its current
+profile; the installed app remains closed. Phone cleanup returned Home and sent
+screen sleep after the comparison and separate preparation probe, including the
+failed stage. Wireless pairing, server and startup configuration remain active.
+Earlier owned trial fixtures, immutable media backups, complete traces, raw
+invalid attempts and all original/aligned build bundles remain private. Personal
+media was never selected for mutation. Audible NVDA/virtual-cursor evaluation
+remains deferred; computed names/focus and all four native flows are automated.
+
+The final local serial-tree checks passed: 103 default and 107 diagnostic library
+tests, 25 helper tests, 42 benchmark pure cases, 87 UI tests, Rust/Prettier/Svelte
+checks, desktop Clippy and the UI production build. Hosted release acceptance is
+required on the final implementation; the earlier frozen candidate already passed
+all five hosted gates and four named native cases on its identical PR merge tree.
+No fake ADB executable was rebuilt or run locally.

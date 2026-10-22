@@ -33,6 +33,7 @@ function Get-TransferCompletedRun {
     if($matches.Count -eq 0){return $null}
     if($matches.Count -ne 1){throw 'Repeated completed run in journal.'}
     $result=$matches[0].result
+    if(@($Events | Where-Object {$_.event -ceq 'stage_invalid' -and $_.ContainsKey('run_ids') -and $result.run_id -cin $_.run_ids}).Count){throw 'Completed operation belongs to an invalid stage; preserve evidence and explicitly prepare a fresh trial, never retry its mutation.'}
     $planned=@($Events | Where-Object {$_.event -eq 'run_planned' -and $_.run.run_id -ceq $result.run_id})
     $cleanup=@($Events | Where-Object {$_.event -eq 'run_cleanup_complete' -and $_.run_id -ceq $result.run_id})
     if($result.valid -ne $true -or $result.outcome -ne 'completed' -or $planned.Count -ne 1 -or $planned[0].build_sha256 -cne $Sha256 -or $cleanup.Count -ne 1){throw 'Existing completed operation needs explicit recovery; never retry its mutation.'}
@@ -138,6 +139,19 @@ function Get-TransferFutility {
     return @{stop=($failures.Count -gt 0);matched_pairs=$pairs;failures=$failures.ToArray()}
 }
 
+function Set-TransferComparisonStageStatus {
+    param([hashtable]$Report,[bool]$Valid,[string]$Reason)
+    if($Valid -and $Report.ContainsKey('stage_valid') -and $Report.stage_valid -eq $false -and $Report.decision -ceq 'invalid_stage'){throw 'An invalid stage cannot be relabelled valid.'}
+    if(-not $Valid -and [string]::IsNullOrWhiteSpace($Reason)){throw 'Invalid stage requires a preserved reason.'}
+    $Report.stage_valid=$Valid
+    $Report.stage_invalid_reason=if($Valid){''}else{$Reason}
+    if(-not $Valid) {
+        $Report.decision='invalid_stage'
+        $Report.verdict.accepted=$false
+        $Report.verdict.reasons=@($Report.verdict.reasons)+@('Stage invalid: '+$Reason)
+    }
+}
+
 function Read-TransferTrace {
     param([Parameter(Mandatory)][string]$Path,[Parameter(Mandatory)][string]$JobId)
     $rows=@(Get-Content -LiteralPath $Path | Where-Object {$_} | ForEach-Object {ConvertFrom-Json -InputObject $_ -AsHashtable})
@@ -213,4 +227,4 @@ function Get-TransferRunPaths {
     if((Join-Path $destination $RemoteName).Length -ge 260){throw 'Trial root is too long for native Windows publication; no device mutation permitted.'}
     return @{root=$runRoot;destination=$destination}
 }
-Export-ModuleMember -Function Assert-TransferLocalPath,Read-TransferTrial,Get-TransferVerdict,Read-TransferTrace,Join-TransferRun,Assert-TransferDriverPin,Get-TransferCompletedRun,Get-TransferRunPaths,Get-TransferFutility
+Export-ModuleMember -Function Assert-TransferLocalPath,Read-TransferTrial,Get-TransferVerdict,Read-TransferTrace,Join-TransferRun,Assert-TransferDriverPin,Get-TransferCompletedRun,Get-TransferRunPaths,Get-TransferFutility,Set-TransferComparisonStageStatus

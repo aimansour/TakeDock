@@ -36,6 +36,13 @@ Copies stream to unique desktop partials, sync, revalidate source, hash both sid
 and publish without overwrite. Move commits deletion only afterwards. Identities
 cross JavaScript as opaque text to preserve nanosecond precision.
 
+The optional development-only `transfer-diagnostics` feature records bounded
+per-job QPC stage observations without choosing a different transfer algorithm.
+Default builds create no diagnostic state or writer. Dropped observations, writer
+failure, incomplete footers or mismatched clocks invalidate benchmark evidence;
+they cannot turn a failed operation into a fast success. Real-phone acceptance
+compares complete backend and native UI totals, retaining stored-file readback.
+
 Settings persist in the per-user profile. Tauri capabilities expose event subscription
 and native dialogs; frontend filesystem/shell/general updater permissions are absent.
 Narrow Rust update commands retain the checked offer and require explicit activation.
