@@ -100,6 +100,14 @@ alternating matched pairs, both backend and native UI totals improving in every
 pair, median gain greater than within-build ranges and measured uncertainty.
 Retain all earlier valid samples; at most two extra pairs for ambiguous positive
 groups. An ineffective candidate is rejected; do not advertise it as faster.
+Apply a predeclared futility stop only to candidate comparison: after any valid
+matched pair fails strict improvement in either total metric, preserve it, write
+an explicitly rejected partial comparison and skip remaining candidate runs.
+Retaining every pair makes later acceptance mathematically impossible after
+that failure. Unrun cells are labelled unrun, never passed. Full four-group,
+three-pair evidence is still mandatory for acceptance; baseline calibration
+still completes all its cells. Test this stop with positive, negative, equal,
+incomplete/mismatched and warm-up inputs before wiring the runner.
 Keep the single fresh whole-branch review at the end under the preserved Native
 method. Report actual sample counts, all totals/limits, preservation and every
 ledger ruling. Merge and release still await a later user instruction.

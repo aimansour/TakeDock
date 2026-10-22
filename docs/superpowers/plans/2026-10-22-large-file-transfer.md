@@ -165,6 +165,14 @@ Task 2 gate continuation: the written buffering fallback is already reviewed and
 
 ## Plan review and execution handoff
 
+Native efficiency ruling, declared before candidate testing: any valid matched
+pair with no strict improvement in either total permanently fails the retained-
+pair acceptance rule. Stop further candidate runs at that point and record a
+rejected partial matrix, including all completed measurements and explicit unrun
+cells. Never call an incomplete matrix accepted. Baseline calibration remains
+complete, and accepting a candidate still requires all four groups and at least
+three matched pairs. Add pure regression coverage before the Task 5 runner change.
+
 Self-review maps timing/decision requirements to Tasks 1–2/5, bounded exact I/O and flush ownership to amended Task 3, production/commit barriers and accessibility to amended Task 4, and physical preservation to Tasks 2/5. Check all declared interfaces/types against their consumers and all five Review Focus items against named tests. No benchmark outcome is prewritten.
 
 The original plan and written buffering amendment are approved. Preserve Native and resume at the first incomplete ledger task without another confirmation. The baseline measurement gate remains real: finish it and record the candidate decision before optimizing; hosted fake-device timing cannot replace phone evidence.
