@@ -139,6 +139,18 @@ impl Fixture {
     fn original(&self, name: &str) -> std::path::PathBuf {
         self.root.path().join("videos").join(name)
     }
+    fn partial(&self) -> std::path::PathBuf {
+        let paths = std::fs::read_dir(self.root.path().join("destination"))
+            .unwrap()
+            .map(|entry| entry.unwrap().path())
+            .filter(|path| {
+                path.extension()
+                    .is_some_and(|extension| extension == "partial")
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(paths.len(), 1);
+        paths[0].clone()
+    }
     fn rename(&self, video: Video) -> String {
         self.files
             .start_job(
@@ -153,7 +165,12 @@ impl Fixture {
 }
 impl Drop for Fixture {
     fn drop(&mut self) {
-        for flag in ["hold-index", "hold-hash", "hold-rename-ack"] {
+        for flag in [
+            "hold-index",
+            "hold-hash",
+            "hold-rename-ack",
+            "hold-read-tail",
+        ] {
             let _ = std::fs::remove_file(self.root.path().join(flag));
         }
         self.engine.shutdown();
@@ -351,6 +368,88 @@ fn failed_hash_and_collisions_retain_original_and_existing_destination() {
     let id = fixture.job(JobKind::Move, vec![video]);
     assert_eq!(fixture.result(&id)["status"], "failed");
     assert_eq!(std::fs::read(target).unwrap(), b"keep");
+}
+#[test]
+fn stored_partial_corruption_during_hash_retains_source() {
+    use std::io::{Seek, SeekFrom, Write};
+    let fixture = Fixture::new(1024 * 1024);
+    std::fs::write(fixture.root.path().join("hold-hash"), b"").unwrap();
+    let video = fixture.videos[0].clone();
+    let id = fixture.job(JobKind::Move, vec![video.clone()]);
+    wait(|| fixture.root.path().join("hash-started").exists());
+    let partial = fixture.partial();
+    let mut stored = std::fs::OpenOptions::new()
+        .write(true)
+        .open(&partial)
+        .unwrap();
+    assert_eq!(stored.metadata().unwrap().len(), video.size);
+    stored.seek(SeekFrom::Start(128)).unwrap();
+    stored.write_all(b"corrupted").unwrap();
+    stored.sync_all().unwrap();
+    assert_eq!(stored.metadata().unwrap().len(), video.size);
+    drop(stored);
+    std::fs::remove_file(fixture.root.path().join("hold-hash")).unwrap();
+    let result = fixture.result(&id);
+    assert_eq!(result["status"], "failed");
+    assert_eq!(result["message"], "copy_hash_mismatch");
+    assert!(fixture.original(&video.name).exists());
+    assert!(!fixture.root.path().join("delete-called").exists());
+    assert!(!partial.exists());
+    assert!(
+        !fixture
+            .root
+            .path()
+            .join("destination")
+            .join(&video.name)
+            .exists()
+    );
+}
+#[test]
+fn destination_created_during_hash_is_retained() {
+    let fixture = Fixture::new(1024 * 1024);
+    std::fs::write(fixture.root.path().join("hold-hash"), b"").unwrap();
+    let video = fixture.videos[0].clone();
+    let id = fixture.job(JobKind::Move, vec![video.clone()]);
+    wait(|| fixture.root.path().join("hash-started").exists());
+    let partial = fixture.partial();
+    let destination = fixture.root.path().join("destination").join(&video.name);
+    std::fs::write(&destination, b"keep this destination").unwrap();
+    std::fs::remove_file(fixture.root.path().join("hold-hash")).unwrap();
+    assert_eq!(fixture.result(&id)["status"], "failed");
+    assert_eq!(
+        std::fs::read(&destination).unwrap(),
+        b"keep this destination"
+    );
+    assert!(fixture.original(&video.name).exists());
+    assert!(!fixture.root.path().join("delete-called").exists());
+    assert!(!partial.exists());
+}
+#[test]
+fn cancellation_discards_a_held_buffered_tail() {
+    let fixture = Fixture::new(128 * 1024);
+    std::fs::write(fixture.root.path().join("hold-read-tail"), b"").unwrap();
+    let video = fixture.videos[0].clone();
+    let id = fixture.job(JobKind::Move, vec![video.clone()]);
+    wait(|| fixture.root.path().join("read-prefix-held").exists());
+    wait(|| {
+        fixture
+            .events
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|event| event["id"] == id && event["bytes"].as_u64().unwrap_or(0) > 0)
+    });
+    let partial = fixture.partial();
+    let buffered_length = partial.metadata().unwrap().len();
+    fixture.files.cancel(&id).unwrap();
+    assert_eq!(fixture.result(&id)["status"], "cancelled");
+    assert!(fixture.original(&video.name).exists());
+    assert!(!fixture.root.path().join("delete-called").exists());
+    assert!(!partial.exists());
+    assert_eq!(
+        buffered_length, 0,
+        "held sub-buffer prefix was written directly"
+    );
 }
 #[test]
 fn cancellation_removes_partial_and_never_deletes_original() {

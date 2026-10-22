@@ -394,7 +394,14 @@ fn file_command(root: &Path, args: &[String]) -> Result<(), String> {
                     if root.join("fail-read").exists() {
                         return Err("fixture_transfer_failure".into());
                     }
-                    if root.join("slow-read").exists() {
+                    if root.join("hold-read-tail").exists() {
+                        let mut held = HeldTailWriter {
+                            output: SlowWriter(io::stdout().lock()),
+                            root: root.to_path_buf(),
+                            written: 0,
+                        };
+                        videos.read(name, &identity, &mut held)?;
+                    } else if root.join("slow-read").exists() {
                         let mut slow = SlowWriter(io::stdout().lock());
                         videos.read(name, &identity, &mut slow)?;
                     } else {
@@ -588,6 +595,32 @@ fn watch_files(root: &Path, videos: &takedock_files::Root, stream: &str) -> Resu
     }
 }
 struct SlowWriter<W: Write>(W);
+struct HeldTailWriter<W: Write> {
+    output: SlowWriter<W>,
+    root: PathBuf,
+    written: usize,
+}
+impl<W: Write> Write for HeldTailWriter<W> {
+    fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+        if self.written >= 64 * 1024 {
+            fs::write(self.root.join("read-prefix-held"), b"")?;
+            while self.root.join("hold-read-tail").exists() {
+                thread::sleep(Duration::from_millis(10));
+            }
+        }
+        let limit = if self.written < 64 * 1024 {
+            bytes.len().min(64 * 1024 - self.written)
+        } else {
+            bytes.len()
+        };
+        let size = self.output.write(&bytes[..limit])?;
+        self.written += size;
+        Ok(size)
+    }
+    fn flush(&mut self) -> io::Result<()> {
+        self.output.flush()
+    }
+}
 impl<W: Write> Write for SlowWriter<W> {
     fn write(&mut self, buffer: &[u8]) -> io::Result<usize> {
         thread::sleep(Duration::from_millis(20));
