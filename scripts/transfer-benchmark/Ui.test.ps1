@@ -1,5 +1,13 @@
 . (Join-Path $PSScriptRoot 'TestSupport.ps1')
 Import-Module (Join-Path $PSScriptRoot 'Ui.psm1') -Force
+Test-TransferCase 'combined imports retain every shared runner command' {
+    Import-Module (Join-Path $PSScriptRoot 'Core.psm1') -Force
+    Import-Module (Join-Path $PSScriptRoot 'Device.psm1') -Force -DisableNameChecking
+    Import-Module (Join-Path $PSScriptRoot 'Ui.psm1') -Force -DisableNameChecking
+    foreach($name in @('Assert-TransferLocalPath','Read-TransferTrial','Get-TransferVerdict','Assert-TransferSource','Invoke-TransferRun')) {
+        $null=Get-Command $name -ErrorAction Stop
+    }
+}
 Test-TransferCase '100 percent alone and the wrong job are not completion' {
     $snapshot=@{notices=@(@{key=@{operation_id='other'};outcome='completed'})}
     Assert-TransferReject {Assert-TransferTerminal -JobId job -NoticeId other -Snapshot $snapshot}

@@ -1,7 +1,7 @@
 Set-StrictMode -Version Latest
 $ErrorActionPreference='Stop'
-Import-Module (Join-Path $PSScriptRoot 'Core.psm1') -Force
-Import-Module (Join-Path $PSScriptRoot 'Device.psm1') -Force -DisableNameChecking
+Import-Module (Join-Path $PSScriptRoot 'Core.psm1')
+Import-Module (Join-Path $PSScriptRoot 'Device.psm1') -DisableNameChecking
 
 function Invoke-TransferDriver {
     param([hashtable]$Session,[string]$Method,[string]$Path,[AllowNull()][object]$Body=$null)

@@ -161,8 +161,7 @@ foreach($tool in @($AdbPath,$TauriDriver,$EdgeDriver,$FfmpegPath,$FfprobePath)) 
 }
 if(-not $IsWindows){throw 'The native UI benchmark requires Windows.'}
 if(-not [Diagnostics.Stopwatch]::IsHighResolution){throw 'High resolution host clock unavailable.'}
-$driverVersion=& $TauriDriver --version
-if($LASTEXITCODE -ne 0 -or $driverVersion -notmatch '2\.1\.0'){throw 'Pinned tauri-driver 2.1.0 required.'}
+Assert-TransferDriverPin -Executable $TauriDriver
 $runtime=@(Get-Item 'C:/Program Files (x86)/Microsoft/EdgeWebView/Application/*/msedgewebview2.exe' | ForEach-Object {$_.VersionInfo.ProductVersion}) | Sort-Object {[version]$_} -Descending | Select-Object -First 1
 $edgeVersion=& $EdgeDriver --version
 if($LASTEXITCODE -ne 0 -or $edgeVersion -notmatch [regex]::Escape($runtime)){throw 'EdgeDriver must match installed WebView2.'}

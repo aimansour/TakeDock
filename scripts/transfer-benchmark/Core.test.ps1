@@ -109,4 +109,15 @@ Test-TransferCase 'both hashes are inside the enclosing verification interval' {
     $rows | ForEach-Object {ConvertTo-Json -InputObject $_ -Compress -Depth 8} | Set-Content -LiteralPath $path
     Assert-TransferReject {Read-TransferTrace -Path $path -JobId job}
 }
+Test-TransferCase 'pinned native driver is identified by Cargo receipt without unsupported CLI arguments' {
+    $root=New-TransferTestRoot
+    $bin=Join-Path $root 'bin';New-Item -ItemType Directory -Path $bin | Out-Null
+    $exe=Join-Path $bin 'tauri-driver.exe';[IO.File]::WriteAllBytes($exe,[byte[]](1,2,3))
+    $receipt=@{installs=@{'tauri-driver 2.1.0 (registry+https://github.com/rust-lang/crates.io-index)'=@{bins=@('tauri-driver.exe')}}}
+    $receipt | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath (Join-Path $root '.crates2.json')
+    $null=Assert-TransferDriverPin -Executable $exe
+    $receipt.installs=@{'tauri-driver 2.2.0 (registry+https://github.com/rust-lang/crates.io-index)'=@{bins=@('tauri-driver.exe')}}
+    $receipt | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath (Join-Path $root '.crates2.json')
+    Assert-TransferReject {Assert-TransferDriverPin -Executable $exe}
+}
 Write-Output "PASS: $script:Cases core benchmark cases."

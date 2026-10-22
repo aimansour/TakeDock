@@ -1,6 +1,6 @@
 Set-StrictMode -Version Latest
 $ErrorActionPreference='Stop'
-Import-Module (Join-Path $PSScriptRoot 'Core.psm1') -Force
+Import-Module (Join-Path $PSScriptRoot 'Core.psm1')
 $script:AdbAdapter=$null
 
 function Quote-TransferShell([string]$Value) {

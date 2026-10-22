@@ -18,6 +18,13 @@ function Assert-TransferLocalPath {
     }
     return $full
 }
+function Assert-TransferDriverPin {
+    param([Parameter(Mandatory)][string]$Executable)
+    $root=Split-Path (Split-Path $Executable -Parent) -Parent
+    $receipt=Get-Content -LiteralPath (Join-Path $root '.crates2.json') -Raw | ConvertFrom-Json -AsHashtable
+    $matching=@($receipt.installs.Keys | Where-Object {$_ -match '^tauri-driver 2\.1\.0 \(registry\+https://github\.com/rust-lang/crates\.io-index\)$'})
+    if($matching.Count -ne 1 -or [IO.Path]::GetFileName($Executable) -notin $receipt.installs[$matching[0]].bins){throw 'Pinned tauri-driver 2.1.0 Cargo receipt required.'}
+}
 
 function Read-TransferTrial {
     param([Parameter(Mandatory)][string]$Manifest,[Parameter(Mandatory)][string]$TrialRoot)
@@ -161,4 +168,4 @@ function Join-TransferRun {
     foreach($span in $Trace.spans){$result.stages[$span.stage]=$span.ms}
     return $result
 }
-Export-ModuleMember -Function Assert-TransferLocalPath,Read-TransferTrial,Get-TransferVerdict,Read-TransferTrace,Join-TransferRun
+Export-ModuleMember -Function Assert-TransferLocalPath,Read-TransferTrial,Get-TransferVerdict,Read-TransferTrace,Join-TransferRun,Assert-TransferDriverPin
