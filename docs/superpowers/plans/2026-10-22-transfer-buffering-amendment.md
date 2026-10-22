@@ -12,7 +12,7 @@
 
 **Parent plan:** [Large-file transfer plan](2026-10-22-large-file-transfer.md). Tasks 1–2 and their evidence remain; the tasks below replace only Tasks 3–4 if the completed baseline still rules out paired verification. Parent Task 5 and its complete acceptance gate remain binding. Preserve the parent's Native ledger and frozen baseline artifacts.
 
-**Status:** Draft for user review; Native is already selected. Baseline collection continues independently. Do not implement this amendment until its review and the parent baseline decision are complete.
+**Status:** Approved explicitly by the user on 2026-10-22: «أعتمد التعديل؛ نفّذ Native». Baseline collection continues independently. Execute after the parent baseline decision; no further execution-method or plan confirmation is needed.
 
 ## Why this amendment exists
 
@@ -111,5 +111,5 @@ owns bounded byte/flush semantics; Task 4 owns integration, cancellation and
 commit barriers; parent Task 5 owns physical acceptance, preservation and the
 fresh final review. The generic copier signature and progress type match their
 consumer. All five review-focus cases have named owners/tests. No gain is
-prewritten. Ask the user to review this written amendment; preserve Native and
-continue the already authorized baseline work while awaiting that review.
+prewritten. Written review is complete; preserve Native and finish the already
+authorized baseline work before implementing the amended candidate.
