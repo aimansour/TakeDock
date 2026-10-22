@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { unlinkSync } from 'node:fs';
+import { mkdirSync, unlinkSync, writeFileSync } from 'node:fs';
 import { spawn } from 'node:child_process';
 import { browser, $, $$ } from '@wdio/globals';
 import {
@@ -604,6 +604,78 @@ describe('TakeDock release desktop acceptance', () => {
     await waitFor(async () => !(await failureCard().isExisting()));
     await browser.closeWindow();
     await browser.switchToWindow(failureWindow);
+
+    const collisionDirectory = join(fixtureRoot, 'collision-destination');
+    mkdirSync(collisionDirectory);
+    await shortcut('s');
+    await $('#destination').waitForExist();
+    await $('#destination').setValue(collisionDirectory);
+    await button('Save settings').click();
+    await shortcut('v');
+    await $('tbody').waitForExist();
+    for (const checked of await $$('tbody input[type="checkbox"]:checked'))
+      await checked.click();
+    const collisionName = 'final-رحلة.mp4';
+    const collisionSelection = await $(
+      `//label[span[normalize-space(.)="Select ${collisionName}"]]/input`,
+    );
+    await collisionSelection.waitForExist();
+    await collisionSelection.click();
+    assert.equal((await $$('tbody input[type="checkbox"]:checked')).length, 1);
+    const collisionSource = (await listedVideos()).find(
+      (video) => video.name === collisionName,
+    )!;
+    const sourceHash = hash(join(fixtureRoot, 'videos', collisionName));
+    const collisionTarget = join(collisionDirectory, collisionName);
+    if (existsSync(join(fixtureRoot, 'hash-started')))
+      unlinkSync(join(fixtureRoot, 'hash-started'));
+    flag('hold-hash');
+    try {
+      await button('Copy to computer').click();
+      await waitFor(() => existsSync(join(fixtureRoot, 'hash-started')));
+      writeFileSync(collisionTarget, 'keep the destination sentinel');
+    } finally {
+      if (existsSync(join(fixtureRoot, 'hold-hash')))
+        unlinkSync(join(fixtureRoot, 'hold-hash'));
+    }
+    await waitFor(async () =>
+      (await fileResults()).notices.some(
+        (notice) =>
+          notice.kind === 'copy' &&
+          notice.name === collisionName &&
+          notice.outcome === 'failed',
+      ),
+    );
+    const collision = (await fileResults()).notices.find(
+      (notice) =>
+        notice.kind === 'copy' &&
+        notice.name === collisionName &&
+        notice.outcome === 'failed',
+    )!;
+    assert.equal(collision.expires_at_ms, null);
+    assert.equal(
+      readFileSync(collisionTarget, 'utf8'),
+      'keep the destination sentinel',
+    );
+    assert.equal(hash(join(fixtureRoot, 'videos', collisionName)), sourceHash);
+    assert.equal(
+      (await listedVideos()).find((video) => video.name === collisionName)
+        ?.identity,
+      collisionSource.identity,
+    );
+    const collisionCard = await $(
+      `article[data-operation-id="${collision.key.operation_id}"]`,
+    );
+    assert.equal((await collisionCard.getText()).includes(collisionName), true);
+    await collisionCard.$('button').click();
+    await waitFor(
+      async () =>
+        !(await fileResults()).notices.some(
+          (notice) => notice.key.operation_id === collision.key.operation_id,
+        ),
+    );
+    await $('.file-results-panel summary').click();
+    await waitFor(async () => !(await collisionCard.isExisting()));
   });
   it('persists Arabic, destination and optional success sound across application restart', async () => {
     await restartFixture(false);

@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{
     collections::HashMap,
-    io::{Read, Write},
+    io::Read,
     path::{Path, PathBuf},
     sync::{
         Arc, Mutex,
@@ -16,7 +16,6 @@ use std::{
 };
 use takedock_files::{Entry, Identity};
 
-#[cfg(test)]
 mod stream_copy;
 
 pub fn quote(value: &str) -> Result<String, String> {
@@ -746,32 +745,15 @@ fn stream(
     let mut event = job.event.clone();
     let sink = sink.clone();
     let output = thread::spawn(move || {
-        let result = (|| -> Result<(), String> {
-            let mut buffer = [0; 256 * 1024];
-            let mut last = Instant::now();
-            let mut count = 0u64;
-            loop {
-                let read = stdout.read(&mut buffer).map_err(err)?;
-                if read == 0 {
-                    break;
-                }
-                count = count.checked_add(read as u64).ok_or("copy_size_mismatch")?;
-                if count > maximum {
-                    return Err("copy_size_mismatch".into());
-                }
-                file.write_all(&buffer[..read]).map_err(err)?;
-                written.store(count, Ordering::Release);
-                if last.elapsed() > Duration::from_millis(100) {
-                    event.bytes = count;
-                    emit(&sink, &event);
-                    last = Instant::now();
-                }
+        let mut last = Instant::now();
+        let result = stream_copy::copy_exact(&mut stdout, &mut file, maximum, |count| {
+            written.store(count, Ordering::Release);
+            if last.elapsed() > Duration::from_millis(100) {
+                event.bytes = count;
+                emit(&sink, &event);
+                last = Instant::now();
             }
-            if count != maximum {
-                return Err("copy_size_mismatch".into());
-            }
-            Ok(())
-        })();
+        });
         failure_flag.store(result.is_err(), Ordering::Release);
         result
     });
