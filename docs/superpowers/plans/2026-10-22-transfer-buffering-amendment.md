@@ -55,7 +55,7 @@ All parent/spec global constraints remain binding, including:
 
 ## Task 3: Exact bounded stream copier
 
-**Files:** Create `src-tauri/src/files/stream_copy.rs`; its tests remain in that module. Integration into `files.rs` belongs to Task 4.
+**Files:** Create `src-tauri/src/files/stream_copy.rs`; its tests remain in that module. Declare the private module in `files.rs` so its tests compile; integrating it into the active worker belongs to Task 4.
 
 **Interfaces:** Produce private `copy_exact<R: Read, W: Write, P: FnMut(u64)>(reader: &mut R, writer: &mut W, expected_size: u64, progress: P) -> Result<(), String>`. Successful return means exact EOF, explicit successful final flush and no retained buffered bytes. Counts use checked addition; truncation, excess and overflow retain `copy_size_mismatch`. I/O errors retain the existing string mapping. No new verification/cancellation DTO or public API.
 
@@ -67,11 +67,11 @@ All parent/spec global constraints remain binding, including:
 
 ## Task 4: Integrate buffering and prove existing commit barriers
 
-**Files:** `src-tauri/src/files.rs`, `tests/fixtures/adb/tests/files.rs`, and the existing native case 3 file only where the parent plan already requires its held-hash collision flow. No helper or dependency changes.
+**Files:** `src-tauri/src/files.rs`, `tests/fixtures/adb/{tests/files.rs,src/main.rs}`, and the existing native case 3 file only where the parent plan already requires its held-hash collision flow. The fixture-only tail gate lives in its existing fake helper implementation; no real helper or dependency changes.
 
 **Interfaces:** Consume Task 3's copier inside the existing stream worker. Its progress closure updates the existing atomic byte count and throttled event (100 ms). Keep controller cancellation/inactivity handling, child exit/stderr checks, joins, stream trace boundaries and all subsequent verification/publication/deletion code in the same order. The copier flush must finish before the caller's `sync_all` and stored-file hash.
 
-- [ ] **Step 1: Add failing integrated safety cases.** Extend the fixture tests with `stored_partial_corruption_during_hash_retains_source` and `destination_created_during_hash_is_retained`: hold remote hashing, change only the fixture-owned desktop partial or create the final destination sentinel, release hashing and assert failure, source preservation, sentinel preservation and partial cleanup. Add a short-tail cancellation variant to `cancellation_removes_partial_and_never_deletes_original` so output smaller than the buffer cannot publish on cancellation. Keep existing batch, remote nonzero/hash, replacement and capture-dispatch assertions.
+- [ ] **Step 1: Add failing integrated safety cases.** Extend the fixture tests with `stored_partial_corruption_during_hash_retains_source` and `destination_created_during_hash_is_retained`: hold remote hashing, change only the fixture-owned desktop partial or create the final destination sentinel, release hashing and assert failure, source preservation, sentinel preservation and partial cleanup. Add `cancellation_discards_a_held_buffered_tail`: the fixture-only `hold-read-tail` mode sends 64 KiB through its existing slow writer, creates `read-prefix-held` and blocks further output while that flag exists; use a 128 KiB payload. Wait for that marker and positive byte progress, assert the partial is still length zero, cancel and require the existing cancelled/source-preserved/no-delete/partial-cleaned outcome. The zero-length assertion must fail on direct writes before integration. Keep existing batch, remote nonzero/hash, replacement and capture-dispatch assertions.
 - [ ] **Step 2: Run hosted RED where necessary.** Commit/push the added regression cases on the draft feature PR and run the fixture integration on GitHub; do not build it locally. For safety assertions already satisfied by the serial implementation, record the pre-change pass instead of inventing a failure. The meaningful behavioral RED for this candidate is Task 3's write-count regression; do not weaken safety tests to manufacture RED.
 - [ ] **Step 3: Integrate just the copier.** Replace the worker's direct read/write loop with `copy_exact`, preserving its event/progress closure. Remove no source-size/identity/digest/child-status check. Add no hashing from input buffers, new worker, delay, protocol, runtime baseline switch or translated message.
 - [ ] **Step 4: Preserve the native flows.** Complete the parent's held-hash destination-race extension in native case 3 through exact native selection and Copy action. Keep all four titles, focus/result/name checks, capture controls and time limits unchanged.
@@ -79,6 +79,20 @@ All parent/spec global constraints remain binding, including:
 - [ ] **Step 6: Commit and freeze.** Commit as `perf: buffer desktop transfer writes before durable verification`. Freeze default and diagnostic executables/resources and hashes with the same release configuration and verified public helpers as the preserved serial baseline. Do not overwrite the baseline or silently change helper bytes.
 
 ## Parent Task 5: unchanged decision gate
+
+Before the next physical stage, add and test a harness-only preparation option
+in `scripts/transfer-benchmark/Device.psm1` and its tests, consumed by the runner:
+create a fresh owned Move duplicate on the phone from the preserved owned master
+using the unchanged identity-bound helper `read`, with an exclusively created
+shell redirection (`set -C`) to the new GUID name. Validate the immutable local
+backup/decode receipt and master identity/hash first, journal the planned creation,
+then verify the new duplicate's fresh identity and full SHA against that backup
+before selection. Masters still use real ADB push. Reject replacement identities,
+wrong backup bytes, unowned/existing targets and failed copy acknowledgements;
+never retry automatically or change the master. Adapter tests must observe RED
+before implementation. This saves repeated wireless uploads outside measured
+operations; disclose the preparation method and use it equally for both builds
+in each comparison group. It does not change the production transfer protocol.
 
 After the reviewed candidate is correct and frozen, run the same separate native
 phone comparison: four size/kind groups, one warm-up per build/group, three
