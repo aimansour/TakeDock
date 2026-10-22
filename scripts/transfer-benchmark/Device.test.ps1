@@ -73,4 +73,18 @@ Test-TransferCase 'unrelated file content or identity changes fail preservation'
     $state.digest='a'*64;$state.identity='{"device":1,"inode":999,"size":7,"modified_ns":1,"changed_ns":1}'
     Assert-TransferReject {Assert-TransferUnrelatedPreserved -Trial $trial}
 }
+Test-TransferCase 'NUL listing preserves leading whitespace in an unrelated name' {
+    $trial=New-TransferTestTrial (New-TransferTestRoot)
+    & (Get-Module Device) {
+        $script:AdbAdapter={param($trial,$arguments)
+            $command=$arguments -join ' '
+            if($command -match "'list'"){return " personal'clip.mp4`0{`"ready`":true}`0"}
+            if($command -match "'stat'"){return '{"device":1,"inode":9,"size":7,"modified_ns":1,"changed_ns":1}'}
+            if($command -match "'hash'"){return 'a'*64}
+            throw 'Unexpected adapter request.'
+        }
+    }
+    $snapshot=@(Get-TransferUnrelatedSnapshot -Trial $trial)
+    Assert-TransferTest ($snapshot[0].name -ceq " personal'clip.mp4") 'Listing trimmed an unrelated filename.'
+}
 Write-Output "PASS: $script:Cases device-preservation cases."

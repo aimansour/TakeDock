@@ -93,6 +93,7 @@ function Invoke-BenchmarkRun([string]$BuildName,[long]$Bytes,[string]$Kind,[int]
         $script:Trial | ConvertTo-Json -Depth 25 | Set-Content -LiteralPath $Manifest
     }
     $run=@{run_id=$runId;build=$BuildName;bytes=[string]$Bytes;kind=$Kind;pair=$Pair;order=$Order;warmup=$Warmup;fixture_id=$fixture.id;destination=$destination}
+    Get-TransferConditions -Trial $script:Trial | ConvertTo-Json -Depth 15 | Set-Content -LiteralPath (Join-Path $runRoot 'conditions-before.json')
     Write-TransferJournal -Trial $script:Trial -Entry @{event='run_planned';run=$run;build_revision=$build.revision;build_sha256=$build.sha256}
     $settingsPath=Join-Path $env:APPDATA 'app.takedock/settings.json'
     $before=if(Test-Path -LiteralPath $settingsPath){[IO.File]::ReadAllBytes($settingsPath)}else{$null}
@@ -120,9 +121,11 @@ function Invoke-BenchmarkRun([string]$BuildName,[long]$Bytes,[string]$Kind,[int]
             $null=Invoke-TransferAdb -Trial $script:Trial -Arguments @('shell','-T',"test ! -e $remote && test ! -L $remote")
         }
         $result | ConvertTo-Json -Depth 30 | Set-Content -LiteralPath (Join-Path $runRoot 'result.json')
+        Get-TransferConditions -Trial $script:Trial | ConvertTo-Json -Depth 15 | Set-Content -LiteralPath (Join-Path $runRoot 'conditions-after.json')
         Write-TransferJournal -Trial $script:Trial -Entry @{event='run_verified';result=$result;output_sha256=$fixture.sha256}
         # The immutable backup is retained; only this newly published owned copy is temporary.
         Remove-Item -LiteralPath $output
+        Write-Host ("Recorded {0} {1} {2} bytes: UI {3:N1} ms, backend {4} ms; warmup={5}" -f $BuildName,$Kind,$Bytes,$result.ui_ms,$result.backend_ms,$Warmup)
         return $result
     } catch {
         Write-TransferJournal -Trial $script:Trial -Entry @{event='run_invalid';run=$run;reason=$_.Exception.Message}
@@ -230,6 +233,8 @@ try {
         @{stage='compare';verdict=$verdict;runs=$results.ToArray()} | ConvertTo-Json -Depth 40 | Set-Content -LiteralPath (Join-Path $TrialRoot 'comparison.json')
     }
     Assert-TransferUnrelatedPreserved -Trial $script:Trial
+    $accessibility=Get-TransferAccessibility -Trial $script:Trial
+    if($accessibility.enabled -cne $script:Trial.accessibility_before.enabled -or $accessibility.services -cne $script:Trial.accessibility_before.services){throw 'Observed accessibility state differs from current trial baseline; retain both observations without restoring stale values.'}
     Write-Output "PASS: $Stage trial recorded privately; screen cleanup and pairing preservation apply."
 } finally {
     if($script:Trial){Complete-TransferTrial -Trial $script:Trial}

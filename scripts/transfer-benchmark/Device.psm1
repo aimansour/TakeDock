@@ -31,7 +31,9 @@ function Invoke-TransferHelper {
     param([hashtable]$Trial,[string[]]$Arguments)
     if($Trial.helper_path -notmatch '^/data/local/tmp/takedock-files-[a-f0-9]{64}$' -and $null -eq $script:AdbAdapter){throw 'Helper is not digest-pinned.'}
     $command=(@(Quote-TransferShell $Trial.helper_path)+@($Arguments | ForEach-Object {Quote-TransferShell $_})) -join ' '
-    return (Invoke-TransferAdb -Trial $Trial -Arguments @('shell','-T',$command)).Trim()
+    $output=Invoke-TransferAdb -Trial $Trial -Arguments @('shell','-T',$command)
+    if($Arguments[0] -eq 'list'){return $output}
+    return $output.Trim()
 }
 function Assert-TransferCapacity {
     param([decimal]$AvailableBytes,[decimal]$RequiredBytes)
@@ -94,6 +96,24 @@ function Get-TransferDeviceSpace([hashtable]$Trial) {
     $last=@($output -split '\r?\n' | Where-Object {$_ -match '^/|^emulated'})[-1]
     $columns=@($last.Trim() -split '\s+')
     return ([decimal]$columns[3]*1024)
+}
+function Get-TransferConditions {
+    param([Parameter(Mandatory)][hashtable]$Trial)
+    return @{
+        battery=(Invoke-TransferAdb -Trial $Trial -Arguments @('shell','dumpsys','battery'))
+        thermal=(Invoke-TransferAdb -Trial $Trial -Arguments @('shell','dumpsys','thermalservice'))
+        available_bytes=[string](Get-TransferDeviceSpace $Trial)
+        host_os=[Environment]::OSVersion.VersionString
+        powershell=$PSVersionTable.PSVersion.ToString()
+        host_available_bytes=[string]([IO.DriveInfo]::new([IO.Path]::GetPathRoot($Trial.root))).AvailableFreeSpace
+    }
+}
+function Get-TransferAccessibility {
+    param([Parameter(Mandatory)][hashtable]$Trial)
+    return @{
+        enabled=(Invoke-TransferAdb -Trial $Trial -Arguments @('shell','settings','get','secure','accessibility_enabled')).Trim()
+        services=(Invoke-TransferAdb -Trial $Trial -Arguments @('shell','settings','get','secure','enabled_accessibility_services')).Trim()
+    }
 }
 function Get-TransferUnrelatedSnapshot {
     param([Parameter(Mandatory)][hashtable]$Trial)
@@ -161,6 +181,8 @@ function Prepare-TransferTrial {
     if((Test-Path -LiteralPath $manifest) -or (Test-Path -LiteralPath (Join-Path $root 'journal.jsonl'))){throw 'Existing or interrupted trial must not be prepared again.'}
     $trial=@{schema=1;trial_id=$id;root=$root;serial=$Serial;adb_path=$AdbPath;helper_path='';destination=(Join-Path $root 'outputs');journal=(Join-Path $root 'journal.jsonl');fixtures=@()}
     try {
+        $trial.accessibility_before=Get-TransferAccessibility -Trial $trial
+        $trial.conditions_before=Get-TransferConditions -Trial $trial
         $drive=[IO.DriveInfo]::new([IO.Path]::GetPathRoot($root))
         Assert-TransferCapacity -AvailableBytes $drive.AvailableFreeSpace -RequiredBytes 9000000000
         Assert-TransferCapacity -AvailableBytes (Get-TransferDeviceSpace $trial) -RequiredBytes 3500000000
@@ -200,4 +222,4 @@ function Complete-TransferTrial {
     }
     if($errors.Count){throw 'Phone cleanup could not confirm Home and screen sleep; connection may be unavailable.'}
 }
-Export-ModuleMember -Function Invoke-TransferAdb,Invoke-TransferHelper,Assert-TransferCapacity,Assert-TransferSource,New-TransferFixture,Prepare-TransferTrial,Complete-TransferTrial,Write-TransferJournal,Add-TransferPhoneFixture,Assert-TransferTrialSpace,Get-TransferUnrelatedSnapshot,Assert-TransferUnrelatedPreserved
+Export-ModuleMember -Function Invoke-TransferAdb,Invoke-TransferHelper,Assert-TransferCapacity,Assert-TransferSource,New-TransferFixture,Prepare-TransferTrial,Complete-TransferTrial,Write-TransferJournal,Add-TransferPhoneFixture,Assert-TransferTrialSpace,Get-TransferUnrelatedSnapshot,Assert-TransferUnrelatedPreserved,Get-TransferConditions,Get-TransferAccessibility
