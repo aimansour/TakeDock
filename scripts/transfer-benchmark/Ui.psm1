@@ -2,9 +2,11 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference='Stop'
 Import-Module (Join-Path $PSScriptRoot 'Core.psm1')
 Import-Module (Join-Path $PSScriptRoot 'Device.psm1') -DisableNameChecking
+$script:DriverAdapter=$null
 
 function Invoke-TransferDriver {
     param([hashtable]$Session,[string]$Method,[string]$Path,[AllowNull()][object]$Body=$null)
+    if($null -ne $script:DriverAdapter){return & $script:DriverAdapter $Session $Method $Path $Body}
     $uri=$Session.uri.TrimEnd('/')+'/session/'+$Session.id+$Path
     $arguments=@{Uri=$uri;Method=$Method;TimeoutSec=30;ContentType='application/json'}
     if($null -ne $Body){$arguments.Body=ConvertTo-Json -InputObject $Body -Compress -Depth 30}
@@ -112,7 +114,8 @@ function Invoke-TransferRun {
                 $noticeId=Invoke-TransferDriver -Session $Session -Method Get -Path ('/element/'+$elements[0]['element-6066-11e4-a52e-4f735466cecf']+'/attribute/data-operation-id')
                 $end=[Diagnostics.Stopwatch]::GetTimestamp()
                 $uncertainty=[math]::Max($uncertainty,100+$observation.Elapsed.TotalMilliseconds)
-                $null=Assert-TransferTerminal -JobId $jobId -NoticeId $noticeId -Snapshot $snapshot.file_results
+                $confirmed=Get-TransferSnapshot $Session
+                $null=Assert-TransferTerminal -JobId $jobId -NoticeId $noticeId -Snapshot $confirmed.file_results
                 $result=@{}+$Run
                 $result.job_id=$jobId;$result.ui_start_ticks=[string]$start;$result.ui_end_ticks=[string]$end
                 $result.clock_frequency=[string][Diagnostics.Stopwatch]::Frequency

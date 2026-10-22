@@ -44,4 +44,35 @@ Test-TransferCase 'profile restore tolerates equivalent application serializatio
     [IO.File]::WriteAllText($path,'{"language":"en","ready_sound":false}')
     Assert-TransferReject {Restore-TransferProfile -Path $path -Before $before -LastWritten $last}
 }
+Test-TransferCase 'native notice appearing after a snapshot is confirmed from a fresh authoritative read' {
+    $trial=New-TransferTestTrial (New-TransferTestRoot)
+    $destination=Join-Path $trial.root 'output';New-Item -ItemType Directory -Path $destination | Out-Null
+    $state=@{snapshots=0;destination=$destination}
+    & (Get-Module Device) {param($trial)
+        $script:AdbAdapter={param($value,$arguments)
+            if(($arguments -join ' ') -match "'stat'"){return $trial.fixtures[0].source_identity}
+            if(($arguments -join ' ') -match "'hash'"){return $trial.fixtures[0].sha256}
+            throw 'Unexpected device command.'
+        }.GetNewClosure()
+    } $trial
+    & (Get-Module Ui) {param($state)
+        $script:DriverAdapter={param($session,$method,$path,$body)
+            $key='element-6066-11e4-a52e-4f735466cecf'
+            if($path -eq '/execute/sync') {
+                $state.snapshots++
+                $jobs=if($state.snapshots -ge 3){@(@{id='job';kind='copy';count=1;generation=7;status='running'})}else{@()}
+                $notices=if($state.snapshots -ge 4){@(@{key=@{operation_id='job'};outcome='completed';count=1;completed=1})}else{@()}
+                return @{session=@{connected=$true;generation=7};settings=@{destination=$state.destination};jobs=@($jobs);file_results=@{notices=@($notices)}}
+            }
+            if($path -eq '/element'){return @{$key='element'}}
+            if($path -eq '/elements'){return @(@{$key='element'})}
+            if($path.EndsWith('/attribute/data-operation-id')){return 'job'}
+            if($path -eq '/actions' -or $path.EndsWith('/click')){return $null}
+            throw 'Unexpected driver command.'
+        }.GetNewClosure()
+    } $state
+    $run=@{fixture_id='master-500';kind='copy';bytes='4';destination=$destination}
+    $result=Invoke-TransferRun -Session @{uri='http://127.0.0.1:1';id='fake'} -Trial $trial -Run $run
+    Assert-TransferTest ($result.outcome -eq 'completed' -and $state.snapshots -ge 4) 'Native completion used a stale snapshot.'
+}
 Write-Output "PASS: $script:Cases UI-measurement cases."
