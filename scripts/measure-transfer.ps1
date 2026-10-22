@@ -135,6 +135,11 @@ function Invoke-BenchmarkRun([string]$BuildName,[long]$Bytes,[string]$Kind,[int]
         finally {
             if($session){try {Close-TransferSession -Session $session} catch {Write-TransferJournal -Trial $script:Trial -Entry @{event='session_close_failed';reason=$_.Exception.Message}}}
             if($driver){Stop-BenchmarkDriver $driver}
+            if($prepared -and $driver) {
+                foreach($owned in @(Get-CimInstance Win32_Process -Filter "Name = 'takedock.exe'" | Where-Object {$_.ExecutablePath -and $_.ExecutablePath.Equals($build.exe,[StringComparison]::OrdinalIgnoreCase)})) {
+                    Stop-Process -Id $owned.ProcessId -ErrorAction SilentlyContinue
+                }
+            }
             if($prepared) {
                 try {Restore-TransferProfile -Path $settingsPath -Before $before -LastWritten $last}
                 catch {
