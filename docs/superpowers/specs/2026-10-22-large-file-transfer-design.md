@@ -294,6 +294,53 @@ release are separate components. Compatible dependency updates remain authorized
 by the user, but do not add unrelated upgrades to a transfer measurement change.
 The larger framed-stream protocol needs an explicit reviewed design amendment.
 
+### Existing wireless component: automatic recovery (queued 2026-10-24)
+
+This clarifies the already queued compatible bundled-ADB / in-app wireless
+pairing-and-connection component; it is not a second backlog component or a claim
+that recovery is implemented. Keep its existing place after transfer work and
+installer-language handoff. The user explicitly requested that repeated manual
+address entry must not become normal operation.
+
+Current coverage is narrower: `session.rs` watches ADB's already connected device
+list, reattaches when that list reports one authorized device, and restarts a
+closed tracking stream. `desktop.rs` can rebuild the engine on Reconnect. Neither
+path discovers/connects a missing paired wireless transport or remembers a trusted
+phone across address/port changes; Settings currently stores only the ADB executable
+path. The phone's native wireless-debugging tile and the local startup shortcut do
+not implement this application feature.
+
+The later wireless design must cover these acceptance requirements:
+
+- Once a phone is paired, recover its connection after Wi-Fi/router power loss,
+  network return, PC/app restart, ADB restart, DHCP changes and wireless-debugging
+  connection-port changes, without routinely asking for an IP/port, screenshot or
+  new pairing code. Bind recovery to the trusted paired device, not an IP address
+  alone; stale cached endpoints must not select another phone.
+- Use discovery and network/process lifecycle events with bounded retries and
+  backoff. Avoid continuous rapid polling, repeated dialogs and competing recovery
+  loops across app windows. Stop owned recovery work when the app closes.
+- Recognize IP and mDNS aliases of the same verified phone as one phone. Preserve
+  the existing refusal to select arbitrarily when genuinely different authorized
+  phones are present; duplicate aliases must not cause a false `multiple_devices`.
+- Preserve pairing keys, authorization and the user's ADB service/startup setup.
+  Do not silently unpair devices, kill a shared server or disrupt an active job.
+  Retire old session generations and reconcile unknown file outcomes before any
+  later mutation; never replay recording commands, moves or deletions on reconnect.
+- Distinguish recoverable discovery/endpoint failures from revoked pairing, denied
+  authorization, disabled wireless debugging or an unavailable network. Request
+  phone-side action only when Android actually requires it, with one specific
+  explanation; do not promise remote recovery while debugging is disabled.
+- Verify changed-port and network-return recovery, restart recovery, stale
+  discovery results, unavailable mDNS, duplicate aliases, a different phone at an
+  old IP, genuinely multiple phones and revoked authorization. Record real-device
+  coverage separately from deterministic tests. Keep accessible status ordinary
+  and focus stable, with no unsolicited speech or notifications.
+
+Detailed discovery/fallback mechanisms and implementation belong to that later
+component's design. This queue clarification does not interrupt the active speed
+investigation or add wireless recovery code to the transfer change.
+
 Review this specification for complete timing boundaries, a falsifiable
 performance gate, bounded task ownership, cancellation/commit races and unchanged
 preservation/accessibility guarantees. Commit it and present the written file to
