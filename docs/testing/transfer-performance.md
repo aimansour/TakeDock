@@ -101,6 +101,7 @@ run locally without contacting a phone:
 pwsh -NoProfile -File scripts/transfer-benchmark/Core.test.ps1
 pwsh -NoProfile -File scripts/transfer-benchmark/Device.test.ps1
 pwsh -NoProfile -File scripts/transfer-benchmark/Ui.test.ps1
+pwsh -NoProfile -File scripts/transfer-benchmark/Stage.test.ps1
 ```
 
 The runner requires absolute paths for ADB, tauri-driver 2.1.0, a matching
@@ -145,6 +146,14 @@ Native UI observations are bounded at 100 ms plus actual WebDriver request cost,
 which enters the uncertainty budget. Build/watch coordination uses process events
 instead of repeatedly polling an unchanged remote build.
 
+Before selection, the harness performs an ordinary native Refresh and waits for
+the video listing to settle. Immediately before the timed action, it verifies the
+manifest-owned source identity and full digest again, outside the measured
+interval. The same sole selected native element, connected session generation,
+destination and idle operation queue must survive that guard. No navigation or
+refresh occurs between this final guard and the native action. A replacement at
+the same filename therefore cannot obtain mutation authority from a fresh listing.
+
 Baseline calibration retains initial warm-ups and one released/instrumented pair
 per size/kind; its conservative uncertainty includes the largest observed paired
 UI difference. Candidate acceptance uses three alternating pairs per size/kind.
@@ -183,6 +192,15 @@ Stage validity is committed only after preservation checks and final Home/sleep
 cleanup succeed. A failed stage remains explicitly invalid, cannot leave an
 accepted verdict and cannot resume its settled operations as valid evidence;
 its raw timing/byte receipts remain available for diagnosis.
+
+Both Baseline and Compare create a pending stage attempt before registering their
+first run. Each run ID is persisted independently of the eventual summary, so an
+early exception or cleanup failure invalidates every registered run even when no
+summary has been assembled. Reports and the append-only journal must both confirm
+successful closure before new attempt receipts can be reused. Compare also
+requires a valid, closed 16-cell calibration with matching recomputed uncertainty.
+Pending, invalid and legacy calibration reports without closure are refused;
+historical evidence is retained rather than silently relabelled as a new attempt.
 
 Per-run evidence directories use the first 16 hexadecimal digits of the run GUID
 and an exclusive directory creation; the journal retains the complete GUID and

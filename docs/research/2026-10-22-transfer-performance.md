@@ -194,12 +194,24 @@ checks and cleanup receipts. The raw timing rule had already stopped at the firs
 non-improving pair. The later preservation failure is recorded separately and
 supersedes any interpretation of those raw differences as a controlled regression.
 
-The harness now records explicit stage validity and its failure reason, never
-leaves an accepted verdict after failed preservation, and refuses to resume
-completed operations belonging to an invalid stage. Tests observed RED then GREEN
-for both the invalid-stage verdict and invalid-stage resume boundaries. The
-original pre-invalidation comparison is retained privately alongside the corrected
-stage status; measurements were not rewritten or rerun until favorable.
+The harness now records a pending attempt and each run ID before report assembly
+for both calibration and comparison. Preservation and final cleanup must complete
+before report and journal closure permit reuse. Early failure, failed preservation
+or failed cleanup leaves the attempt invalid even without an assembled report.
+Compare refuses pending, invalid or legacy calibrations without successful closure.
+Historical baseline records remain preserved under their original receipts; they
+are not silently relabelled as a new attempt. Tests observed RED then GREEN for
+these boundaries. The original pre-invalidation comparison is retained privately
+alongside the corrected stage status; measurements were not rewritten or rerun
+until favorable.
+
+The final whole-branch review also identified a native selection gap in the
+measurement harness. It now waits for a normal Refresh to settle, verifies the
+source identity and full digest immediately before timing, and requires the same
+sole selected element, session generation, destination and idle queue before the
+native click. Replacement and context-change regressions observed RED then GREEN.
+These harness fixes require no additional physical performance samples and do not
+change the retained historical measurements.
 
 The candidate does not meet the declared acceptance gate. Its production buffer
 and private copier were removed; the final serial transfer implementation exactly
@@ -240,8 +252,13 @@ media was never selected for mutation. Audible NVDA/virtual-cursor evaluation
 remains deferred; computed names/focus and all four native flows are automated.
 
 The final local serial-tree checks passed: 103 default and 107 diagnostic library
-tests, 25 helper tests, 42 benchmark pure cases, 87 UI tests, Rust/Prettier/Svelte
-checks, desktop Clippy and the UI production build. Hosted release acceptance is
-required on the final implementation; the earlier frozen candidate already passed
-all five hosted gates and four named native cases on its identical PR merge tree.
-No fake ADB executable was rebuilt or run locally.
+tests, 25 helper tests, 50 benchmark pure cases, 87 UI tests, Rust/Prettier/Svelte
+checks, desktop Clippy and the UI production build. Four standalone JSONL-reader
+regressions also passed after reproducing an incomplete-record race in the hosted
+fixture tests; readers now consume only newline-committed records and still reject
+malformed complete records. These standalone tests contain no fake executable.
+Hosted release acceptance is required on the final implementation; the earlier
+frozen candidate already passed all five hosted gates and four named native cases
+on its identical PR merge tree. Final hosted results are recorded on
+[PR #22](https://github.com/wip-bunker-42/TakeDock/pull/22). No fake ADB executable
+was rebuilt or run locally.

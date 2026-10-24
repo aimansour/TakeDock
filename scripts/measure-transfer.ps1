@@ -16,6 +16,7 @@ $projectRoot=Split-Path $PSScriptRoot -Parent
 Import-Module (Join-Path $PSScriptRoot 'transfer-benchmark/Core.psm1') -Force
 Import-Module (Join-Path $PSScriptRoot 'transfer-benchmark/Device.psm1') -Force -DisableNameChecking
 Import-Module (Join-Path $PSScriptRoot 'transfer-benchmark/Ui.psm1') -Force -DisableNameChecking
+Import-Module (Join-Path $PSScriptRoot 'transfer-benchmark/Stage.psm1') -Force -DisableNameChecking
 
 function Assert-BenchmarkBuild([hashtable]$Build) {
     if($Build.revision -notmatch '^[a-f0-9]{40}$' -or $Build.sha256 -notmatch '^[a-f0-9]{64}$'){throw 'An exact measured build revision/digest is required.'}
@@ -81,9 +82,10 @@ function Invoke-BenchmarkRun([string]$BuildName,[long]$Bytes,[string]$Kind,[int]
     $events=@(Get-Content -LiteralPath $script:Trial.journal | ForEach-Object {$_ | ConvertFrom-Json -AsHashtable -DateKind String})
     $receiptStage=if($Stage -eq 'Compare'){'Compare'}else{''}
     $saved=Get-TransferCompletedRun -Events $events -Build $BuildName -Sha256 $build.sha256 -Bytes $Bytes -Kind $Kind -Pair $Pair -Order $Order -Warmup $Warmup -Stage $receiptStage
-    if($null -ne $saved){Write-Host "Reusing journal-verified $BuildName $Kind $Bytes-byte result; no operation repeated.";return $saved}
+    if($null -ne $saved){Register-TransferStageRun -Attempt $script:StageAttempt -RunId $saved.run_id;Write-Host "Reusing journal-verified $BuildName $Kind $Bytes-byte result; no operation repeated.";return $saved}
     Assert-TransferTrialSpace -Trial $script:Trial
     $runId=[guid]::NewGuid().ToString('N')
+    Register-TransferStageRun -Attempt $script:StageAttempt -RunId $runId
     $master=@($script:Trial.fixtures | Where-Object {$_.role -eq 'master' -and [long]$_.bytes -eq $Bytes})
     if($master.Count -ne 1){throw 'Owned master payload is missing/ambiguous.'}
     $fixture=$master[0]
@@ -96,7 +98,7 @@ function Invoke-BenchmarkRun([string]$BuildName,[long]$Bytes,[string]$Kind,[int]
         $fixture=Add-TransferPhoneFixture -Trial $script:Trial -Id "move-$runId" -Backup $fixture.backup -Role move_duplicate -FfmpegPath $FfmpegPath -SourceFixtureId $master[0].id
         $script:Trial | ConvertTo-Json -Depth 25 | Set-Content -LiteralPath $Manifest
     }
-    $run=@{run_id=$runId;stage=$Stage;build=$BuildName;bytes=[string]$Bytes;kind=$Kind;pair=$Pair;order=$Order;warmup=$Warmup;fixture_id=$fixture.id;destination=$destination}
+    $run=@{run_id=$runId;stage=$Stage;stage_attempt_id=$script:StageAttempt.id;build=$BuildName;bytes=[string]$Bytes;kind=$Kind;pair=$Pair;order=$Order;warmup=$Warmup;fixture_id=$fixture.id;destination=$destination}
     Get-TransferConditions -Trial $script:Trial | ConvertTo-Json -Depth 15 | Set-Content -LiteralPath (Join-Path $runRoot 'conditions-before.json')
     Write-TransferJournal -Trial $script:Trial -Entry @{event='run_planned';run=$run;build_revision=$build.revision;build_sha256=$build.sha256}
     $settingsPath=Join-Path $env:APPDATA 'app.takedock/settings.json'
@@ -193,6 +195,7 @@ if(-not $Serial) {
     $Serial=($connected[0] -split '\s+')[0]
 }
 $script:Trial=$null
+$script:StageAttempt=$null
 $comparisonReport=$null
 try {
     if(Test-Path -LiteralPath $Manifest) {$script:Trial=Read-TransferTrial -Manifest $Manifest -TrialRoot $TrialRoot}
@@ -210,8 +213,9 @@ try {
         $script:Trial=Prepare-TransferTrial -TrialRoot $TrialRoot -AdbPath $AdbPath -Serial $Serial -Seeds $seeds -Resources (Split-Path $script:BuildInfo.baseline.exe -Parent) -FfmpegPath $FfmpegPath
     }
     if($script:Trial.serial -cne $Serial -or $script:Trial.adb_path -cne $AdbPath){throw 'Existing trial belongs to another device/ADB selection.'}
+    $calibration=if($Stage -ceq 'Compare'){Read-TransferCalibration -TrialRoot $TrialRoot -Path (Join-Path $TrialRoot 'baseline.json')}else{$null}
     $stageAccessibility=Get-TransferAccessibility -Trial $script:Trial
-    Write-TransferJournal -Trial $script:Trial -Entry @{event='stage_started';stage=$Stage;accessibility=$stageAccessibility}
+    $script:StageAttempt=New-TransferStageAttempt -Trial $script:Trial -Stage $Stage -Accessibility $stageAccessibility
     $results=[Collections.Generic.List[object]]::new()
     $futility=@{stop=$false;matched_pairs=0;failures=@()}
     $pairs=if($Stage -eq 'Baseline'){1}else{3}
@@ -241,9 +245,8 @@ try {
             }
         }
         $report=@{stage='baseline';instrumentation_uncertainty_ms=$uncertainty;runs=$results.ToArray()}
-        $report | ConvertTo-Json -Depth 40 | Set-Content -LiteralPath (Join-Path $TrialRoot 'baseline.json')
+        Set-TransferStageReport -Attempt $script:StageAttempt -Report $report
     } else {
-        $calibration=Get-Content -LiteralPath (Join-Path $TrialRoot 'baseline.json') -Raw | ConvertFrom-Json -AsHashtable
         $verdict=Get-TransferVerdict -Runs $results.ToArray() -UncertaintyMs $calibration.instrumentation_uncertainty_ms
         :extra foreach($group in @($verdict.groups | Where-Object {-not $_.accepted})) {
             if($futility.stop){break}
@@ -270,32 +273,21 @@ try {
         })
         $decision=if($futility.stop){'rejected_futility'}elseif($verdict.accepted){'accepted'}else{'rejected'}
         $comparisonReport=@{stage='compare';stage_valid=$false;stage_invalid_reason='Preservation checks pending.';decision=$decision;futility=$futility;unrun_cells=$unrun;verdict=$verdict;runs=$results.ToArray();accessibility_baseline=$stageAccessibility}
-        $comparisonReport | ConvertTo-Json -Depth 40 | Set-Content -LiteralPath (Join-Path $TrialRoot 'comparison.json')
+        Set-TransferStageReport -Attempt $script:StageAttempt -Report $comparisonReport
     }
     Assert-TransferUnrelatedPreserved -Trial $script:Trial
     Assert-TransferAccessibilityPreserved -Trial $script:Trial -Before $stageAccessibility
 } catch {
-    if($script:Trial){Write-TransferJournal -Trial $script:Trial -Entry @{event='stage_invalid';stage=$Stage;reason=$_.Exception.Message;run_ids=@(if($null -ne $comparisonReport){$comparisonReport.runs | ForEach-Object {$_.run_id}})}}
-    if($null -ne $comparisonReport) {
-        Set-TransferComparisonStageStatus -Report $comparisonReport -Valid $false -Reason $_.Exception.Message
-        $comparisonReport | ConvertTo-Json -Depth 40 | Set-Content -LiteralPath (Join-Path $TrialRoot 'comparison.json')
-    }
+    if($script:StageAttempt){Close-TransferStageAttempt -Trial $script:Trial -Attempt $script:StageAttempt -Valid $false -Reason $_.Exception.Message}
     throw
 } finally {
     if($script:Trial) {
         try {Complete-TransferTrial -Trial $script:Trial}
         catch {
-            Write-TransferJournal -Trial $script:Trial -Entry @{event='stage_invalid';stage=$Stage;reason=$_.Exception.Message;run_ids=@(if($null -ne $comparisonReport){$comparisonReport.runs | ForEach-Object {$_.run_id}})}
-            if($null -ne $comparisonReport) {
-                Set-TransferComparisonStageStatus -Report $comparisonReport -Valid $false -Reason $_.Exception.Message
-                $comparisonReport | ConvertTo-Json -Depth 40 | Set-Content -LiteralPath (Join-Path $TrialRoot 'comparison.json')
-            }
+            if($script:StageAttempt){Close-TransferStageAttempt -Trial $script:Trial -Attempt $script:StageAttempt -Valid $false -Reason $_.Exception.Message}
             throw
         }
     }
 }
-if($null -ne $comparisonReport) {
-    Set-TransferComparisonStageStatus -Report $comparisonReport -Valid $true
-    $comparisonReport | ConvertTo-Json -Depth 40 | Set-Content -LiteralPath (Join-Path $TrialRoot 'comparison.json')
-}
+if($script:StageAttempt){Close-TransferStageAttempt -Trial $script:Trial -Attempt $script:StageAttempt -Valid $true}
 Write-Output "PASS: $Stage trial recorded privately; screen cleanup and pairing preservation confirmed."

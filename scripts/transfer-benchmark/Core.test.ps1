@@ -199,19 +199,19 @@ Test-TransferCase 'comparison receipt scope never reuses old calibration warmups
 
 Test-TransferCase 'failed stage preservation cannot leave an accepted timing report' {
  $report=@{decision='accepted';verdict=@{accepted=$true;reasons=@()};runs=@(@{valid=$true;ui_ms=100;backend_ms=90})}
- Set-TransferComparisonStageStatus -Report $report -Valid $false -Reason 'Accessibility changed during stage.'
+ Set-TransferStageStatus -Report $report -Valid $false -Reason 'Accessibility changed during stage.'
  Assert-TransferTest (-not $report.stage_valid -and $report.decision -ceq 'invalid_stage' -and -not $report.verdict.accepted) 'Invalid environment still accepted.'
  Assert-TransferTest ($report.stage_invalid_reason -ceq 'Accessibility changed during stage.' -and $report.runs[0].ui_ms -eq 100 -and $report.runs[0].valid) 'Raw byte/clock observations were rewritten or reason lost.'
- Assert-TransferReject {Set-TransferComparisonStageStatus -Report $report -Valid $true}
+ Assert-TransferReject {Set-TransferStageStatus -Report $report -Valid $true}
 }
 Test-TransferCase 'successful stage preservation retains a truthful rejected timing verdict' {
  $report=@{decision='rejected_futility';verdict=@{accepted=$false;reasons=@('Non-improving pair')};runs=@()}
- Set-TransferComparisonStageStatus -Report $report -Valid $true
+ Set-TransferStageStatus -Report $report -Valid $true
  Assert-TransferTest ($report.stage_valid -and $report.decision -ceq 'rejected_futility' -and -not $report.verdict.accepted) 'Preservation replaced the timing rejection.'
 }
 Test-TransferCase 'invalid stage requires a preserved diagnostic reason' {
  $report=@{decision='accepted';verdict=@{accepted=$true;reasons=@()};runs=@()}
- Assert-TransferReject {Set-TransferComparisonStageStatus -Report $report -Valid $false -Reason ''}
+ Assert-TransferReject {Set-TransferStageStatus -Report $report -Valid $false -Reason ''}
 }
 
 Test-TransferCase 'settled operations from an invalid stage never resume as valid performance evidence' {

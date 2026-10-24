@@ -1,4 +1,5 @@
 #![allow(dead_code)]
+pub mod jsonl;
 use std::{
     path::{Path, PathBuf},
     sync::{Arc, atomic::AtomicBool},

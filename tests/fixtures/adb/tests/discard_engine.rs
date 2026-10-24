@@ -77,11 +77,9 @@ impl Recording {
         )
     }
     fn commands(&self) -> Vec<Value> {
-        std::fs::read_to_string(self.fixture.path().join("commands.jsonl"))
-            .unwrap_or_default()
-            .lines()
-            .map(|line| serde_json::from_str(line).unwrap())
-            .collect()
+        jsonl::complete_json_lines(
+            &std::fs::read(self.fixture.path().join("commands.jsonl")).unwrap_or_default(),
+        )
     }
 }
 impl Drop for Recording {

@@ -106,7 +106,7 @@ jobs:
       - name: Transfer benchmark safety and measurement tests
         shell: pwsh
         run: |
-          foreach ($suite in @('Core', 'Device', 'Ui')) {
+          foreach ($suite in @('Core', 'Device', 'Ui', 'Stage')) {
             & pwsh -NoProfile -File "scripts/transfer-benchmark/$suite.test.ps1"
             if ($LASTEXITCODE -ne 0) { throw "$suite transfer benchmark tests failed" }
           }

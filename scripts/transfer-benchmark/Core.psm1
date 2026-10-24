@@ -37,6 +37,11 @@ function Get-TransferCompletedRun {
     $planned=@($Events | Where-Object {$_.event -eq 'run_planned' -and $_.run.run_id -ceq $result.run_id})
     $cleanup=@($Events | Where-Object {$_.event -eq 'run_cleanup_complete' -and $_.run_id -ceq $result.run_id})
     if($result.valid -ne $true -or $result.outcome -ne 'completed' -or $planned.Count -ne 1 -or $planned[0].build_sha256 -cne $Sha256 -or $cleanup.Count -ne 1){throw 'Existing completed operation needs explicit recovery; never retry its mutation.'}
+    if($planned[0].run.ContainsKey('stage_attempt_id')) {
+        $attempt=$planned[0].run.stage_attempt_id
+        $closed=@($Events | Where-Object {$_.event -ceq 'stage_validated' -and $_.stage_attempt_id -ceq $attempt -and $result.run_id -cin $_.run_ids})
+        if($closed.Count -ne 1){throw 'Stage closure is pending or unverified; no automatic operation retry.'}
+    }
     return $result
 }
 
@@ -139,16 +144,19 @@ function Get-TransferFutility {
     return @{stop=($failures.Count -gt 0);matched_pairs=$pairs;failures=$failures.ToArray()}
 }
 
-function Set-TransferComparisonStageStatus {
+function Set-TransferStageStatus {
     param([hashtable]$Report,[bool]$Valid,[string]$Reason)
-    if($Valid -and $Report.ContainsKey('stage_valid') -and $Report.stage_valid -eq $false -and $Report.decision -ceq 'invalid_stage'){throw 'An invalid stage cannot be relabelled valid.'}
+    if($Valid -and $Report.ContainsKey('stage_status') -and $Report.stage_status -ceq 'invalid'){throw 'An invalid stage cannot be relabelled valid.'}
     if(-not $Valid -and [string]::IsNullOrWhiteSpace($Reason)){throw 'Invalid stage requires a preserved reason.'}
     $Report.stage_valid=$Valid
+    $Report.stage_status=if($Valid){'valid'}else{'invalid'}
     $Report.stage_invalid_reason=if($Valid){''}else{$Reason}
     if(-not $Valid) {
         $Report.decision='invalid_stage'
-        $Report.verdict.accepted=$false
-        $Report.verdict.reasons=@($Report.verdict.reasons)+@('Stage invalid: '+$Reason)
+        if($Report.ContainsKey('verdict')) {
+            $Report.verdict.accepted=$false
+            $Report.verdict.reasons=@($Report.verdict.reasons)+@('Stage invalid: '+$Reason)
+        }
     }
 }
 
@@ -227,4 +235,4 @@ function Get-TransferRunPaths {
     if((Join-Path $destination $RemoteName).Length -ge 260){throw 'Trial root is too long for native Windows publication; no device mutation permitted.'}
     return @{root=$runRoot;destination=$destination}
 }
-Export-ModuleMember -Function Assert-TransferLocalPath,Read-TransferTrial,Get-TransferVerdict,Read-TransferTrace,Join-TransferRun,Assert-TransferDriverPin,Get-TransferCompletedRun,Get-TransferRunPaths,Get-TransferFutility,Set-TransferComparisonStageStatus
+Export-ModuleMember -Function Assert-TransferLocalPath,Read-TransferTrial,Get-TransferVerdict,Read-TransferTrace,Join-TransferRun,Assert-TransferDriverPin,Get-TransferCompletedRun,Get-TransferRunPaths,Get-TransferFutility,Set-TransferStageStatus
