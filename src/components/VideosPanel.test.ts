@@ -3,6 +3,51 @@ import userEvent from '@testing-library/user-event';
 import { expect, it, vi } from 'vitest';
 import VideosPanel from './VideosPanel.svelte';
 import type { Video } from '../lib/types';
+import { readFileSync } from 'node:fs';
+import { fileURLToPath, URL as NodeURL } from 'node:url';
+
+it('keeps native benchmark refresh and loading locators aligned with the rendered panel', () => {
+  const source = readFileSync(
+    fileURLToPath(
+      new NodeURL('../../scripts/transfer-benchmark/Ui.psm1', import.meta.url),
+    ),
+    'utf8',
+  );
+  const refresh = source.match(
+    /\$refresh=Get-TransferElement[^\r\n]*-Value '([^']+)'/,
+  );
+  const loading = source.match(/value='([^']+Loading…[^']+)'/);
+  expect(refresh).not.toBeNull();
+  expect(loading).not.toBeNull();
+  const { container } = render(VideosPanel, {
+    videos: [],
+    language: 'en',
+    loading: true,
+    onJob: vi.fn(),
+    onRefresh: vi.fn(),
+  });
+  const button = screen.getByRole('button', { name: 'Refresh videos' });
+  const message = screen.getByText('Loading…');
+  const other = document.createElement('section');
+  other.innerHTML =
+    '<h2>Other</h2><button>Refresh videos</button><p>Loading…</p>';
+  container.append(other);
+  for (const [xpath, expected] of [
+    [refresh![1], button],
+    [loading![1], message],
+  ] as const) {
+    const result = document.evaluate(
+      xpath,
+      document,
+      null,
+      XPathResult.ORDERED_NODE_SNAPSHOT_TYPE,
+      null,
+    );
+    expect(result.snapshotLength).toBe(1);
+    expect(result.snapshotItem(0)).toBe(expected);
+  }
+});
+
 const videos: Video[] = [
   {
     name: 'one.mp4',

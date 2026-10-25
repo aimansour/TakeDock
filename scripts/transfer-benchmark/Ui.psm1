@@ -93,7 +93,7 @@ function Invoke-TransferRun {
     $null=Invoke-TransferDriver -Session $Session -Method Post -Path '/actions' -Body $actions
     $refresh=$null
     do {
-        try {$refresh=Get-TransferElement -Session $Session -Using xpath -Value '//section[.//h2[normalize-space(.)="Videos"]]//button[normalize-space(.)="Refresh"]'}
+        try {$refresh=Get-TransferElement -Session $Session -Using xpath -Value '//section[.//h2[normalize-space(.)="Videos"]]//button[normalize-space(.)="Refresh videos"]'}
         catch {if($deadline.Elapsed.TotalSeconds -gt 30){throw};Start-Sleep -Milliseconds 100}
     }while(-not $refresh)
     Click-TransferElement $Session $refresh
