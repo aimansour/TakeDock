@@ -262,3 +262,11 @@ frozen candidate already passed all five hosted gates and four named native case
 on its identical PR merge tree. Final hosted results are recorded on
 [PR #22](https://github.com/wip-bunker-42/TakeDock/pull/22). No fake ADB executable
 was rebuilt or run locally.
+
+A later [ADB Burst Mode configuration experiment](2026-10-24-wireless-burst-mode.md)
+on 2026-10-24 found faster actual 500 MB native Copy in two temporary-server
+comparisons, followed by a slow ordinary-connection 1 GB observation. The
+[repository survey and subsequent probes](2026-10-24-transfer-repository-survey.md)
+investigate streaming further. These experiments are separate from the rejected
+buffering candidate and preserve this report's original measurements and
+invalid-stage verdict.

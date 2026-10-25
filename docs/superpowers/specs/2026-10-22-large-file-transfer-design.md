@@ -310,6 +310,14 @@ phone across address/port changes; Settings currently stores only the ADB execut
 path. The phone's native wireless-debugging tile and the local startup shortcut do
 not implement this application feature.
 
+Reuse the SDK's existing mDNS discovery and paired-device auto-connect rather
+than building a second discovery loop. The 2026-10-25 follow-up observed one
+trusted phone reconnect through that existing SDK behavior after Wi-Fi/wireless
+debugging was enabled, with the same pairing and no new address or code entry.
+That existing coverage is not a missing feature. The application component owns
+the remaining trust selection, lifecycle coordination, status/fallback and alias
+handling gaps, and must add only what the compatible SDK does not already do.
+
 The later wireless design must cover these acceptance requirements:
 
 - Once a phone is paired, recover its connection after Wi-Fi/router power loss,
@@ -319,7 +327,8 @@ The later wireless design must cover these acceptance requirements:
   alone; stale cached endpoints must not select another phone.
 - Use discovery and network/process lifecycle events with bounded retries and
   backoff. Avoid continuous rapid polling, repeated dialogs and competing recovery
-  loops across app windows. Stop owned recovery work when the app closes.
+  loops across app windows or with the SDK. Observe/reuse SDK discovery first.
+  Stop owned recovery work when the app closes.
 - Recognize IP and mDNS aliases of the same verified phone as one phone. Preserve
   the existing refusal to select arbitrarily when genuinely different authorized
   phones are present; duplicate aliases must not cause a false `multiple_devices`.
