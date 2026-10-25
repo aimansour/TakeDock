@@ -1,7 +1,7 @@
 # One-way phone-folder handoff; remove desktop transfers
 
 Date: 2026-10-25, Africa/Cairo.
-Status: written design for user review; product implementation is not started.
+Status: approved by the user on 2026-10-25; implementation planning is next.
 Working base: `1dbb32e25e2f22ee151c2ed1a2eb414d660d5610`.
 
 ## Intent and user decisions
