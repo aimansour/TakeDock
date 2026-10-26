@@ -31,10 +31,8 @@ developer tiles, then add it to Quick Settings. Its long press opens the wireles
 debugging page directly, including pairing and connection details. This was
 verified on that phone; other manufacturers can arrange these controls differently.
 
-The destination defaults to your Windows Videos folder / TakeDock and is created
-automatically. Existing selected folders are preserved. Optionally change the
-destination in Settings and Save. Set `adb.exe` if absent from
-`PATH`. ADB/deadline changes apply on Reconnect; language, folder and optional
+Set `adb.exe` in Settings if absent from
+`PATH`. ADB/deadline changes apply on Reconnect; language and optional
 success sound persist. Failure feedback is enabled; optional success feedback
 defaults off. The ready-to-speak cue has its own setting and defaults on.
 
@@ -75,31 +73,34 @@ operations run. The recorded preparation preamble stays in the video.
 
 ## Managing files
 
-Refresh Videos, select completed files, then Copy, Move or Delete. Rename appears
-for one selected file and preserves the extension. Delete has batch confirmation
-and is permanent. Existing destinations are retained. Move checks the original
-again after verified copying and before deletion. Independent file failures do
+Refresh Videos and use Mark beside a completed video, or select videos and choose
+Mark selected. Mark moves them into `/sdcard/DCIM/TakeDock` on the same phone
+storage. Confirmed sources disappear from TakeDock; the app does not list or
+manage that destination. Copy them yourself through Phone Link/File Explorer:
+Internal storage > DCIM > TakeDock. There is no video transfer to Windows in TakeDock.
+Selection alone does not move a file. Rename appears for one selected source and
+preserves the extension; Delete is permanent and has batch confirmation.
+Existing destination files are retained without overwrite. Independent file failures do
 not prevent the remaining batch from being processed. Read per-file results by
 ordinary navigation; there are no live regions or automatic result announcements.
 
 Videos appear newest first with finalized-container duration rounded to the
 nearest millisecond. Unknown duration is labelled unavailable. The Activity bar
-shows native per-file transfer percentage, batch counts, independent verification
-and the final result. Your reader can beep/speak progress according to its own
-progress-bar settings, without app-generated speech or live regions.
+shows indeterminate progress during file work, batch counts and the final result,
+without app-generated speech or live regions.
 
 Ctrl+Shift+N opens another window. Give it a name in Settings to identify it in
 Alt+Tab. Names last until the window closes. All windows share the phone,
-destination, settings and queue; result sounds occur once per backend result.
+settings and queue; result sounds occur once per backend result.
 Reopening the desktop shortcut brings the most recently active window forward.
 
 Active, paused and unfinished recordings are protected. Container validation is
 conservative, not a full codec/playability test. Finish saving and Refresh.
-Normal failure/cancellation removes temporary `.partial` copies; a forcibly killed
-process may leave an abandoned partial file, which is not a successful copy.
 Precommit phone journals recover the original on the next helper invocation.
-Cancellation cannot reverse an already committed deletion; a verified desktop
-copy remains available after a move.
+Cancellation cannot reverse a committed handoff or deletion. A lost handoff
+acknowledgement is an unknown outcome, with no automatic mutation retry. Refresh
+the source list before taking further action. Marking exchanges metadata and
+moves the directory entry; it does not stream, hash or decode the video payload.
 
 ## Troubleshooting
 
@@ -128,7 +129,7 @@ See [acceptance and device limits](testing/current-take-discard.md).
 | Observer unavailable | Check phone installation restrictions/authorization. Reconnect; file operations still work. Remove an old development Debug Observer before installing the differently signed Release APK. |
 | Capture unavailable | Open Camera must be active in video mode, with correct volume-key settings. |
 | Unconfirmed recording | Inspect the phone; toggles are never retried. Reconnect to synchronize. Adjust the deadline if needed. |
-| Destination exists | Choose another destination or rename the video; no overwrite occurs. |
+| Destination exists | Rename the source video or resolve the collision yourself through Phone Link; no overwrite occurs. |
 | Source changed | Refresh and select the new file identity. |
 | Protected video | Finish saving. Unrecognized/damaged containers require phone-side handling. |
 | Media indexing warning | Mutation succeeded; refresh the phone media app. |

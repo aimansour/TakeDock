@@ -11,21 +11,20 @@ with Tauri 2, Svelte 5 and Rust, with a small Android Observer. MIT licensed.
 - Start, stop, pause and resume video using Open Camera's configured volume keys.
 - Dispatch immediately through a persistent ADB shell; verify independently
   through accessibility events without blocking subsequent controls.
-- Batch copy, move and delete completed videos from `/sdcard/DCIM/OpenCamera`;
-  rename one video, preserving its extension.
-- Verify transfers with source identity, size and SHA-256. Never overwrite an
-  existing destination. Move deletes the original only after verified copying.
+- Mark completed videos to move them from `/sdcard/DCIM/OpenCamera` into
+  `/sdcard/DCIM/TakeDock` on the phone; delete selected source videos or rename one.
+- Marking removes the video from TakeDock after confirmation. Copy it to Windows
+  yourself through Phone Link. Existing destination files are never overwritten.
 - Manage files while Open Camera is closed; recording requires it active in video mode.
 - English and Arabic/RTL, labelled native controls, logical focus, absent
   inapplicable capture buttons, and no unsolicited result announcements.
 - Silent success by default; optional rising success sound in Settings.
   Failures always use a distinct falling sound.
-- Named windows share one phone, destination, settings and file queue.
+- Named windows share one phone, settings and file queue.
   Reopening the shortcut activates the last active window; Ctrl+Shift+N opens another.
-- Default destination: your Windows Videos folder / TakeDock. Videos appear
-  newest first, with container duration accurate to the nearest millisecond.
-- Native activity progress supports screen-reader progress beeps/percentage
-  announcements according to the reader's settings; results have no live regions.
+- Source videos appear newest first, with container duration accurate to the
+  nearest millisecond. Handed-off files are no longer managed by TakeDock.
+- Native activity progress and batch counts remain available without live regions.
 - Automatic startup/manual update checks. Only **Install update** starts
   installation, with cryptographic artifact/version verification.
 
@@ -34,8 +33,7 @@ with Tauri 2, Svelte 5 and Rust, with a small Android Observer. MIT licensed.
 1. Install the x64 installer from [Releases](https://github.com/aimansour/TakeDock/releases).
 2. Install [Android Platform Tools](https://developer.android.com/tools/releases/platform-tools).
    Pair, authorize and connect one phone **outside TakeDock**. Check `adb devices` shows `device`.
-3. The destination defaults to Videos/TakeDock; optionally change it in Settings.
-   Choose `adb.exe` if it is not on `PATH`.
+3. Choose `adb.exe` in Settings if it is not on `PATH`.
 4. Configure Open Camera: volume up starts/stops video, volume down pauses/resumes.
    Keep it active in video mode for recording controls. Refresh Videos to manage files.
 
@@ -55,9 +53,9 @@ retried. Tested Open Camera ignores stops within about 500 ms of starting/resumi
 Inspect the phone if a command cannot be confirmed.
 
 Unfinished, damaged or unrecognized containers remain visible but protected.
-Delete is permanent and requires batch confirmation. Cancelling a move before
-deletion retains the original; after deletion it cannot undo that commit. The
-verified desktop copy remains available. Read [setup](docs/setup.md) for details.
+Delete is permanent and requires batch confirmation. Marking is a one-way phone
+folder move: TakeDock offers no destination view or return action. If confirmation
+is lost, refresh the source list before further action. Read [setup](docs/setup.md).
 
 ## Development
 

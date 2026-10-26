@@ -271,10 +271,15 @@ fn main() {
             "android.intent.action.MEDIA_SCANNER_SCAN_FILE",
             "-d",
             uri,
-        ] if uri.starts_with("file:///sdcard/DCIM/OpenCamera/") => {
+        ] if uri.starts_with("file:///sdcard/DCIM/OpenCamera/")
+            || uri.starts_with("file:///sdcard/DCIM/TakeDock/") =>
+        {
             fs::write(root.join("index-started"), b"").unwrap();
             while root.join("hold-index").exists() {
                 thread::sleep(Duration::from_millis(10));
+            }
+            if root.join("fail-handoff-index").exists() {
+                std::process::exit(1);
             }
             println!("Broadcast completed: result=0");
         }
@@ -360,6 +365,23 @@ fn file_command(root: &Path, args: &[String]) -> Result<(), String> {
             }
         }
         ["stat", name] => println!("{}", serde_json::to_string(&videos.stat(name)?).unwrap()),
+        ["handoff-guarded", name, expected, operation] => {
+            fs::create_dir_all(root.join("handoff")).map_err(|e| e.to_string())?;
+            let destination = takedock_files::Root::open(&root.join("handoff"))?;
+            let expected = serde_json::from_str(expected).map_err(|e| e.to_string())?;
+            takedock_files::handoff::serve(
+                &videos,
+                &destination,
+                name,
+                &expected,
+                operation,
+                takedock_files::handoff::read_permit_stdin,
+                &mut HandoffOutput {
+                    root,
+                    bytes: Vec::new(),
+                },
+            )?;
+        }
         ["delete-guarded", name, expected, operation] => {
             let mut trace = fs::OpenOptions::new()
                 .create(true)
@@ -453,6 +475,46 @@ fn finish_fixture_take(root: &Path) {
 struct GuardOutput<'a> {
     root: &'a Path,
     bytes: Vec<u8>,
+}
+struct HandoffOutput<'a> {
+    root: &'a Path,
+    bytes: Vec<u8>,
+}
+impl Write for HandoffOutput<'_> {
+    fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+        use takedock_files::handoff::{Message, Outcome};
+        self.bytes.extend(bytes);
+        while let Some(end) = self.bytes.iter().position(|byte| *byte == b'\n') {
+            let line: Vec<_> = self.bytes.drain(..=end).collect();
+            let message: Message = serde_json::from_slice(&line).unwrap();
+            match message {
+                Message::Prepared { .. } => {
+                    fs::write(self.root.join("handoff-started"), b"")?;
+                    while self.root.join("hold-handoff-before-permit").exists() {
+                        thread::sleep(Duration::from_millis(10));
+                    }
+                }
+                Message::Result {
+                    outcome: Outcome::HandedOff { .. },
+                    ..
+                } => {
+                    fs::write(self.root.join("handoff-committed"), b"")?;
+                    while self.root.join("hold-handoff-after-commit").exists() {
+                        thread::sleep(Duration::from_millis(10));
+                    }
+                    if self.root.join("drop-handoff-result").exists() {
+                        return Err(io::ErrorKind::BrokenPipe.into());
+                    }
+                }
+                _ => {}
+            }
+            io::stdout().lock().write_all(&line)?;
+        }
+        Ok(bytes.len())
+    }
+    fn flush(&mut self) -> io::Result<()> {
+        io::stdout().flush()
+    }
 }
 impl Write for GuardOutput<'_> {
     fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
