@@ -1,3 +1,4 @@
+#![cfg(windows)]
 mod common;
 use common::{Fixture, movie};
 use serde_json::json;

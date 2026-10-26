@@ -379,9 +379,37 @@ describe('TakeDock release desktop acceptance', () => {
       (await $$('[aria-live], [role="status"], [role="alert"]')).length,
       0,
     );
-    await sourceRow('take-0001.mp4').$('button[data-mark]').click();
+    // The preceding batch deliberately changes unrelated source history.
+    // Start a fresh managed take so retirement is proved while eligible.
+    await button('Recording').click();
+    await button('Start video').waitForExist();
+    await button('Start video').click();
+    await $('input[name="discard-take"]').waitForExist();
+    await waitFor(
+      async () =>
+        (await $('#speech-readiness').getAttribute('data-readiness')) ===
+        'ready',
+    );
+    await button('Stop').click();
+    await button('Start video').waitForExist();
+    const eligibleBeforeHandoff = await browser.execute(async () => {
+      const api = (
+        window as unknown as {
+          __TAURI_INTERNALS__: {
+            invoke: (
+              name: string,
+            ) => Promise<{ session: { discard: { eligible: boolean } } }>;
+          };
+        }
+      ).__TAURI_INTERNALS__;
+      return (await api.invoke('bootstrap')).session.discard.eligible;
+    });
+    assert.equal(eligibleBeforeHandoff, true);
+    await shortcut('v');
+    await sourceRow('take-0002.mp4').$('button[data-mark]').waitForExist();
+    await sourceRow('take-0002.mp4').$('button[data-mark]').click();
     await waitFor(() =>
-      existsSync(join(fixtureRoot, 'handoff', 'take-0001.mp4')),
+      existsSync(join(fixtureRoot, 'handoff', 'take-0002.mp4')),
     );
     await button('Recording').click();
     await waitFor(async () => {
