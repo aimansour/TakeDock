@@ -158,7 +158,6 @@ impl Drop for Fixture {
             "hold-handoff-before-permit",
             "hold-handoff-after-commit",
             "hold-rename-ack",
-            "hold-read-tail",
         ] {
             let _ = std::fs::remove_file(self.root.path().join(flag));
         }

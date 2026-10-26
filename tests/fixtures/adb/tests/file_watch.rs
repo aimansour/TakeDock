@@ -27,7 +27,7 @@ fn baseline(updates: &Arc<Mutex<Vec<WatchUpdate>>>) -> bool {
 }
 
 #[test]
-fn watch_starts_while_hash_holds_mutation_lock() {
+fn watch_starts_while_handoff_holds_mutation_lock() {
     let fixture = Fixture::new();
     std::fs::write(fixture.video("old.mp4"), movie()).unwrap();
     let identity = Root::open(&fixture.path().join("videos"))
@@ -35,23 +35,23 @@ fn watch_starts_while_hash_holds_mutation_lock() {
         .stat("old.mp4")
         .unwrap();
     let command = format!(
-        "/data/local/tmp/takedock-files-test hash old.mp4 {}",
+        "/data/local/tmp/takedock-files-test handoff-guarded old.mp4 {} 4fb0ef42-f12b-4b61-ae88-cf0bd0650084",
         quote(&serde_json::to_string(&identity).unwrap()).unwrap()
     );
-    fixture.flag("hold-hash");
-    let _hash = ChildGuard(
+    fixture.flag("hold-handoff-before-permit");
+    let _handoff = ChildGuard(
         fixture
             .lease
             .adb
-            .spawn(Some(&fixture.lease.serial), &["exec-out", &command], false)
+            .spawn(Some(&fixture.lease.serial), &["shell", "-T", &command], false)
             .unwrap(),
     );
-    wait(|| fixture.path().join("hash-started").exists());
+    wait(|| fixture.path().join("handoff-started").exists());
     let (watch, updates) = watcher(&fixture);
     wait(|| baseline(&updates));
-    assert!(fixture.path().join("hold-hash").exists());
+    assert!(fixture.path().join("hold-handoff-before-permit").exists());
     watch.shutdown();
-    fixture.unflag("hold-hash");
+    fixture.unflag("hold-handoff-before-permit");
 }
 
 #[test]
