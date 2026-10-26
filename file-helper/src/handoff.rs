@@ -12,7 +12,24 @@ pub struct Receipt {
     pub operation_id: String,
     pub source_name: String,
     pub destination_name: String,
+    #[serde(with = "receipt_identity")]
     pub identity: Identity,
+}
+
+// Internally tagged enum deserialization buffers nested values and cannot
+// deserialize u128 fields. Carry the exact identity as opaque JSON text, as
+// other host/source identity messages already do, without rounding timestamps.
+mod receipt_identity {
+    use super::Identity;
+    use serde::{Deserialize, Deserializer, Serializer};
+    pub fn serialize<S: Serializer>(value: &Identity, output: S) -> Result<S::Ok, S::Error> {
+        let wire = serde_json::to_string(value).map_err(serde::ser::Error::custom)?;
+        output.serialize_str(&wire)
+    }
+    pub fn deserialize<'de, D: Deserializer<'de>>(input: D) -> Result<Identity, D::Error> {
+        let wire = String::deserialize(input)?;
+        serde_json::from_str(&wire).map_err(serde::de::Error::custom)
+    }
 }
 
 #[cfg(test)]

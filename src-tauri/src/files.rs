@@ -538,6 +538,13 @@ fn check(job: &Job) -> Result<(), String> {
         Ok(())
     }
 }
+fn settle_file_result(result: &mut FileResult) {
+    if result.status == "failed"
+        && ["operation_cancelled", "session_replaced"].contains(&result.message.as_str())
+    {
+        result.status = "cancelled".into();
+    }
+}
 fn settled_status(results: &[FileResult], cancelled: bool) -> &'static str {
     if !results.is_empty() && results.iter().all(|r| r.status == "completed") {
         "completed"
@@ -715,6 +722,7 @@ fn execute(
                 }
             }
         }
+        settle_file_result(&mut result);
         if result.status == "completed" {
             job.event.completed += 1;
         }
@@ -726,6 +734,32 @@ fn execute(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn cancellation_during_a_source_command_is_cancelled_but_uncertainty_is_preserved() {
+        for code in ["operation_cancelled", "session_replaced"] {
+            let mut result = FileResult {
+                name: "take.mp4".into(),
+                status: "failed".into(),
+                message: code.into(),
+                requested_name: None,
+                destination_name: None,
+            };
+            settle_file_result(&mut result);
+            assert_eq!(result.status, "cancelled");
+            assert_eq!(settled_status(&[result], true), "cancelled");
+        }
+        for status in ["outcome_unknown", "completed", "retained"] {
+            let mut result = FileResult {
+                name: "take.mp4".into(),
+                status: status.into(),
+                message: "operation_cancelled".into(),
+                requested_name: None,
+                destination_name: None,
+            };
+            settle_file_result(&mut result);
+            assert_eq!(result.status, status);
+        }
+    }
     #[test]
     fn desktop_transfers_are_rejected_and_mark_is_accepted() {
         assert!(serde_json::from_str::<JobKind>("\"copy\"").is_err());

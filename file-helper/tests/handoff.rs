@@ -5,6 +5,39 @@ use takedock_files::{
 };
 
 const OP: &str = "4fb0ef42-f12b-4b61-ae88-cf0bd0650084";
+#[test]
+fn committed_receipt_round_trips_through_the_actual_wire_decoder_without_rounding_identity() {
+    let expected = Identity {
+        device: 9007199254740993,
+        inode: 9007199254740995,
+        size: 500000000,
+        modified_ns: 1700000000123456789,
+        changed_ns: 1700000000123456791,
+    };
+    let message = Message::Result {
+        operation_id: OP.into(),
+        outcome: Outcome::HandedOff {
+            receipt: handoff::Receipt {
+                operation_id: OP.into(),
+                source_name: "رحلة '1.mp4".into(),
+                destination_name: "رحلة '1.mp4".into(),
+                identity: expected.clone(),
+            },
+            warning: None,
+        },
+    };
+    let wire = serde_json::to_vec(&message).unwrap();
+    let decoded: Message = serde_json::from_slice(&wire)
+        .expect("committed receipt must be accepted by the real host decoder");
+    let Message::Result {
+        outcome: Outcome::HandedOff { receipt, .. },
+        ..
+    } = decoded
+    else {
+        panic!("receipt lost");
+    };
+    assert_eq!(receipt.identity, expected);
+}
 fn movie() -> Vec<u8> {
     fn atom(kind: &[u8; 4], bytes: &[u8]) -> Vec<u8> {
         let mut data = ((bytes.len() + 8) as u32).to_be_bytes().to_vec();
