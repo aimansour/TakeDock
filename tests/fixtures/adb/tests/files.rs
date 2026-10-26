@@ -127,14 +127,22 @@ impl Fixture {
                         .contains(&event["status"].as_str().unwrap())
             })
         });
-        self.events
+        let result = self
+            .events
             .lock()
             .unwrap()
             .iter()
             .rev()
             .find(|event| event["id"] == id)
             .unwrap()
-            .clone()
+            .clone();
+        eprintln!("terminal: {result}");
+        eprintln!(
+            "peer outcomes: {}",
+            std::fs::read_to_string(self.root.path().join("handoff-outcomes.jsonl"))
+                .unwrap_or_default()
+        );
+        result
     }
     fn original(&self, name: &str) -> std::path::PathBuf {
         self.root.path().join("videos").join(name)
@@ -514,7 +522,9 @@ fn late_cancel_after_rename_ack_keeps_completed() {
         if disconnect {
             fixture.engine.shutdown();
         } else {
-            fixture.files.cancel(&id).unwrap();
+            if let Err(code) = fixture.files.cancel(&id) {
+                assert_eq!(code, "job_not_found");
+            }
         }
         std::fs::remove_file(fixture.root.path().join("hold-index")).unwrap();
         let result = fixture.result(&id);

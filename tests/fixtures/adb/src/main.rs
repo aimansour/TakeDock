@@ -487,6 +487,11 @@ impl Write for HandoffOutput<'_> {
         while let Some(end) = self.bytes.iter().position(|byte| *byte == b'\n') {
             let line: Vec<_> = self.bytes.drain(..=end).collect();
             let message: Message = serde_json::from_slice(&line).unwrap();
+            let mut trace = fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(self.root.join("handoff-outcomes.jsonl"))?;
+            trace.write_all(&line)?;
             match message {
                 Message::Prepared { .. } => {
                     fs::write(self.root.join("handoff-started"), b"")?;
