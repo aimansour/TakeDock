@@ -43,7 +43,11 @@ fn watch_starts_while_handoff_holds_mutation_lock() {
         fixture
             .lease
             .adb
-            .spawn(Some(&fixture.lease.serial), &["shell", "-T", &command], false)
+            .spawn(
+                Some(&fixture.lease.serial),
+                &["shell", "-T", &command],
+                false,
+            )
             .unwrap(),
     );
     wait(|| fixture.path().join("handoff-started").exists());
