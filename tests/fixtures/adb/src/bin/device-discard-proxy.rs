@@ -161,12 +161,15 @@ struct Backup {
 }
 impl Backup {
     fn helper(&self, target: &Target, kind: &str, output: File) -> Result<(), String> {
-        let identity = serde_json::to_string(&target.identity).map_err(|e| e.to_string())?;
-        let mut words = vec![target.helper.as_str(), kind, target.name.as_str()];
-        if kind != "stat" {
-            words.push(identity.as_str());
-        }
-        let remote = shell_words::join(words);
+        // This private preservation tool owns its backup transport. Production
+        // helpers no longer expose any video payload read/hash commands.
+        let source = format!("/sdcard/DCIM/OpenCamera/{}", target.name);
+        let remote = match kind {
+            "read" => shell_words::join(["cat", "--", source.as_str()]),
+            "hash" => shell_words::join(["sha256sum", "--", source.as_str()]),
+            "stat" => shell_words::join([target.helper.as_str(), "stat", target.name.as_str()]),
+            _ => return Err("invalid_backup_command".into()),
+        };
         let result = run_bounded(
             Command::new(&self.adb)
                 .args(["-s", &target.serial, "exec-out", &remote])
@@ -186,7 +189,16 @@ impl Backup {
             if fs::metadata(&path).map_err(|e| e.to_string())?.len() > 65536 {
                 return Err("backup_metadata_too_large".into());
             }
-            fs::read_to_string(&path).map_err(|e| e.to_string())
+            let value = fs::read_to_string(&path).map_err(|e| e.to_string())?;
+            if kind == "hash" {
+                Ok(value
+                    .split_whitespace()
+                    .next()
+                    .ok_or("backup_hash_missing")?
+                    .to_owned())
+            } else {
+                Ok(value)
+            }
         })();
         let _ = fs::remove_file(path);
         result

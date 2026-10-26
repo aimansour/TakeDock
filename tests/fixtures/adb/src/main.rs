@@ -306,6 +306,33 @@ fn main() {
         }
         ["exec-out", command] => {
             let args = shell_words::split(command).unwrap();
+            if let [kind, separator, path] = args
+                .iter()
+                .map(String::as_str)
+                .collect::<Vec<_>>()
+                .as_slice()
+                && ["cat", "sha256sum"].contains(kind)
+                && *separator == "--"
+                && let Some(name) = path.strip_prefix("/sdcard/DCIM/OpenCamera/")
+            {
+                takedock_files::validate_name(name).unwrap();
+                let file = root.join("videos").join(name);
+                if *kind == "cat" {
+                    if root.join("fail-read").exists() {
+                        std::process::exit(1);
+                    }
+                    io::copy(&mut fs::File::open(file).unwrap(), &mut io::stdout().lock()).unwrap();
+                } else {
+                    use sha2::{Digest, Sha256};
+                    let digest = if root.join("bad-hash").exists() {
+                        "0".repeat(64)
+                    } else {
+                        format!("{:x}", Sha256::digest(fs::read(file).unwrap()))
+                    };
+                    println!("{digest}  {path}");
+                }
+                return;
+            }
             if !args
                 .first()
                 .is_some_and(|path| path.starts_with("/data/local/tmp/takedock-files-"))
