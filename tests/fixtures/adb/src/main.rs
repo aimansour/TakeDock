@@ -327,7 +327,10 @@ fn main() {
                     let digest = if root.join("bad-hash").exists() {
                         "0".repeat(64)
                     } else {
-                        format!("{:x}", Sha256::digest(fs::read(file).unwrap()))
+                        Sha256::digest(fs::read(file).unwrap())
+                            .iter()
+                            .map(|byte| format!("{byte:02x}"))
+                            .collect::<String>()
                     };
                     println!("{digest}  {path}");
                 }
