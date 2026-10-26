@@ -1,8 +1,8 @@
 use serde::{Deserialize, Serialize};
 mod finalized;
 pub mod guarded;
+pub mod handoff;
 pub mod watch;
-use sha2::{Digest, Sha256};
 use std::{
     fs::{self, File, OpenOptions},
     io::{Read, Write},
@@ -28,7 +28,6 @@ pub struct Entry {
 }
 pub struct Root {
     path: PathBuf,
-    #[cfg(unix)]
     directory: File,
 }
 #[derive(Serialize, Deserialize)]
@@ -37,6 +36,8 @@ struct Journal {
     name: String,
     claim: String,
     identity: Identity,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    handoff: Option<handoff::Intent>,
 }
 impl Root {
     pub fn delete_guarded(
@@ -135,7 +136,6 @@ impl Root {
         }
         Ok(Self {
             path: path.into(),
-            #[cfg(unix)]
             directory,
         })
     }
@@ -227,6 +227,9 @@ impl Root {
         Ok(file)
     }
     fn rename_raw(&self, source: &str, destination: &str) -> Result<(), String> {
+        self.move_to_raw(source, self, destination)
+    }
+    fn move_to_raw(&self, source: &str, target: &Root, destination: &str) -> Result<(), String> {
         #[cfg(unix)]
         {
             use std::os::fd::AsRawFd;
@@ -237,7 +240,7 @@ impl Root {
                     libc::SYS_renameat2,
                     self.directory.as_raw_fd(),
                     source.as_ptr(),
-                    self.directory.as_raw_fd(),
+                    target.directory.as_raw_fd(),
                     destination.as_ptr(),
                     1u32,
                 )
@@ -258,7 +261,7 @@ impl Root {
                 .encode_wide()
                 .chain(Some(0))
                 .collect();
-            let destination: Vec<u16> = self
+            let destination: Vec<u16> = target
                 .path
                 .join(destination)
                 .as_os_str()
@@ -353,6 +356,14 @@ impl Root {
         )
     }
     fn claim(&self, name: &str, expected: &Identity) -> Result<(Journal, Self, String), String> {
+        self.claim_for(name, expected, None)
+    }
+    fn claim_for(
+        &self,
+        name: &str,
+        expected: &Identity,
+        handoff: Option<handoff::Intent>,
+    ) -> Result<(Journal, Self, String), String> {
         self.checked(name, expected)?;
         let journal_directory = self.journal_directory()?;
         let token = uuid::Uuid::new_v4().to_string();
@@ -361,10 +372,13 @@ impl Root {
             name: name.into(),
             claim: format!(".takedock-delete-{token}"),
             identity: expected.clone(),
+            handoff,
         };
         let filename = format!("{token}.json");
         journal_directory.publish_journal(&token, &journal)?;
         self.rename_raw(name, &journal.claim)?;
+        #[cfg(test)]
+        handoff::tests::checkpoint(handoff::tests::Point::ClaimUnverified);
         let actual = identity(&self.open_named(&journal.claim)?)?;
         if !same_file_after_rename(&actual, expected) {
             self.restore(&journal)?;
@@ -431,39 +445,6 @@ impl Root {
         directory.remove_raw(&filename)?;
         Ok(())
     }
-    pub fn hash(&self, name: &str, expected: &Identity) -> Result<String, String> {
-        let mut file = self.checked(name, expected)?;
-        let mut hasher = Sha256::new();
-        let mut buffer = [0; 65536];
-        loop {
-            let size = file.read(&mut buffer).map_err(err)?;
-            if size == 0 {
-                break;
-            }
-            hasher.update(&buffer[..size]);
-        }
-        if identity(&file)? != *expected {
-            return Err("source_changed".into());
-        }
-        Ok(hasher
-            .finalize()
-            .iter()
-            .map(|byte| format!("{byte:02x}"))
-            .collect())
-    }
-    pub fn read(
-        &self,
-        name: &str,
-        expected: &Identity,
-        output: &mut impl Write,
-    ) -> Result<(), String> {
-        let mut file = self.checked(name, expected)?;
-        std::io::copy(&mut file, output).map_err(err)?;
-        if identity(&file)? != *expected {
-            return Err("source_changed".into());
-        }
-        Ok(())
-    }
     pub fn recover(&self) -> Result<(), String> {
         let path = self.path.join(".takedock-journal");
         if !path.exists() {
@@ -518,6 +499,12 @@ impl Root {
                 return Err("invalid_journal".into());
             }
             validate_name(&journal.name)?;
+            if let Some(intent) = &journal.handoff
+                && (uuid::Uuid::parse_str(&intent.operation_id).is_err()
+                    || intent.destination_name != journal.name)
+            {
+                return Err("invalid_handoff_journal".into());
+            }
             if let Ok(file) = self.open_named(&journal.claim) {
                 if !same_file_after_rename(&identity(&file)?, &journal.identity) {
                     return Err("recovery_source_changed".into());
@@ -695,27 +682,14 @@ mod tests {
         assert_eq!(root.stat("new.mp4").unwrap().inode, id.inode);
     }
     #[test]
-    fn changed_sources_are_retained_on_delete_or_read() {
+    fn changed_sources_are_retained_on_delete_or_rename() {
         let (dir, root) = root();
         std::fs::write(dir.path().join("source.mp4"), b"before").unwrap();
         let id = root.stat("source.mp4").unwrap();
         std::fs::write(dir.path().join("source.mp4"), b"replacement-data").unwrap();
         assert!(root.delete("source.mp4", &id).is_err());
-        assert!(root.read("source.mp4", &id, &mut Vec::new()).is_err());
+        assert!(root.rename("source.mp4", "other.mp4", &id).is_err());
         assert!(dir.path().join("source.mp4").exists());
-    }
-    #[test]
-    fn content_hash_uses_the_open_verified_file() {
-        let (dir, root) = root();
-        std::fs::write(dir.path().join("source.mp4"), b"abc").unwrap();
-        let id = root.stat("source.mp4").unwrap();
-        assert_eq!(
-            root.hash("source.mp4", &id).unwrap(),
-            "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
-        );
-        let mut bytes = Vec::new();
-        root.read("source.mp4", &id, &mut bytes).unwrap();
-        assert_eq!(bytes, b"abc");
     }
     #[test]
     fn verified_delete_removes_only_the_selected_file() {
@@ -811,6 +785,7 @@ mod tests {
             name: "source.mp4".into(),
             claim: format!(".takedock-delete-{token}"),
             identity: root.stat("source.mp4").unwrap(),
+            handoff: None,
         };
         let result = directory.prepare_journal(token, &journal, |file, bytes| {
             file.write_all(&bytes[..bytes.len() / 2]).map_err(err)?;
