@@ -22,20 +22,15 @@
       jobs.find((job) => job.status === 'queued'),
   );
   const notice = $derived(!job && !loading ? notices[0] : undefined);
-  const transferring = $derived(
-    job?.status === 'running' && job.phase === 'copying' && job.total > 0,
-  );
   const value = $derived(
     notice
       ? ['completed', 'warning'].includes(notice.outcome) &&
         notice.completed === notice.count
         ? 100
         : 0
-      : transferring && job
-        ? Math.min(100, (job.bytes / job.total) * 100)
-        : !job && !loading
-          ? 0
-          : undefined,
+      : !job && !loading
+        ? 0
+        : undefined,
   );
 </script>
 
@@ -56,13 +51,6 @@
       {t(language, job.kind)} · <bdi>{job.name}</bdi> · {job.completed}/{job.count}
       {t(language, 'count')}
     </p>
-    {#if transferring}<p>
-        {(job.bytes / 1048576).toLocaleString(language, {
-          maximumFractionDigits: 1,
-        })} / {(job.total / 1048576).toLocaleString(language, {
-          maximumFractionDigits: 1,
-        })} MB
-      </p>{/if}
     {#if job.message}<p>{t(language, job.message)}</p>{/if}
   {:else if notice}
     <p>{t(language, notice.outcome)}</p>

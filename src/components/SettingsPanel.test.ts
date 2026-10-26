@@ -3,11 +3,31 @@ import userEvent from '@testing-library/user-event';
 import { it, expect, vi } from 'vitest';
 import SettingsPanel from './SettingsPanel.svelte';
 import { defaultSettings } from '../lib/types';
+it('has no desktop destination controls and omits obsolete destination when saving', async () => {
+  const user = userEvent.setup();
+  const onSave = vi.fn();
+  const legacy = { ...defaultSettings, destination: 'obsolete/path' };
+  render(SettingsPanel, {
+    settings: legacy,
+    onSave,
+    onAdb: vi.fn(),
+    onReconnect: vi.fn(),
+  });
+  expect(screen.queryByLabelText('Computer destination folder')).toBeNull();
+  expect(screen.queryByRole('button', { name: 'Choose folder' })).toBeNull();
+  await user.click(screen.getByRole('button', { name: 'Save settings' }));
+  expect(onSave).toHaveBeenCalledOnce();
+  expect(onSave.mock.calls[0][0]).not.toHaveProperty('destination');
+  expect(onSave.mock.calls[0][0]).toMatchObject({
+    language: 'en',
+    ready_sound: true,
+    ready_delay_ms: 800,
+  });
+});
 it('defaults readiness independently of optional success feedback', () => {
   const { container } = render(SettingsPanel, {
     settings: defaultSettings,
     onSave: vi.fn(),
-    onFolder: vi.fn(),
     onAdb: vi.fn(),
     onReconnect: vi.fn(),
   });
@@ -39,7 +59,6 @@ it('saves readiness with the keyboard independently and shares the Arabic labels
   const { rerender, container } = render(SettingsPanel, {
     settings: defaultSettings,
     onSave,
-    onFolder: vi.fn(),
     onAdb: vi.fn(),
     onReconnect: vi.fn(),
   });
@@ -83,7 +102,6 @@ it.each(['', '499', '501', '525', '5001'])(
     render(SettingsPanel, {
       settings: defaultSettings,
       onSave,
-      onFolder: vi.fn(),
       onAdb: vi.fn(),
       onReconnect: vi.fn(),
     });
@@ -103,7 +121,6 @@ it('saves language and optional success sound through native labeled inputs', as
   const { container, rerender } = render(SettingsPanel, {
     settings: defaultSettings,
     onSave,
-    onFolder: vi.fn(),
     onAdb: vi.fn(),
     onReconnect: vi.fn(),
   });

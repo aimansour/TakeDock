@@ -21,6 +21,149 @@ const mocks = vi.hoisted(() => ({
 vi.mock('./ipc', () => ({ ipc: mocks }));
 import { createSession } from './session.svelte';
 
+const handoffSource = {
+  name: 'ready.mp4',
+  size: 10,
+  modified_ms: 0,
+  ready: true,
+  identity:
+    '{"device":9007199254740993,"inode":9007199254740995,"size":10,"modified_ns":0,"changed_ns":1}',
+};
+it('committed handoff removes a source immediately and rejects an older in-flight listing', async () => {
+  const callbacks = new Map<string, (value: unknown) => void>();
+  mocks.listen.mockImplementation((name, callback) => {
+    callbacks.set(name, callback);
+    return Promise.resolve(vi.fn());
+  });
+  mocks.videos.mockResolvedValueOnce([handoffSource] as never);
+  const app = createSession();
+  await app.initialize();
+  await app.refresh();
+  let finish!: (value: never) => void;
+  mocks.videos.mockImplementationOnce(
+    () =>
+      new Promise((resolve) => {
+        finish = resolve;
+      }),
+  );
+  const old = app.refresh();
+  const update = {
+    generation: 3,
+    job_id: 'job',
+    operation_id: 'one',
+    sequence: 1,
+    source_name: handoffSource.name,
+    source_identity: handoffSource.identity,
+  };
+  callbacks.get('file-handed-off')?.(update);
+  expect(app.data.videos).toEqual([]);
+  finish([handoffSource] as never);
+  await old;
+  expect(app.data.videos).toEqual([]);
+  const replacement = {
+    ...handoffSource,
+    identity: handoffSource.identity.replace(
+      '9007199254740995',
+      '9007199254740996',
+    ),
+  };
+  mocks.videos.mockResolvedValueOnce([replacement] as never);
+  await app.refresh();
+  callbacks.get('file-handed-off')?.(update);
+  expect(app.data.videos).toEqual([replacement]);
+  app.dispose();
+});
+it('reserves initiating rows synchronously, refuses competing actions and releases them on failed settlement', async () => {
+  const callbacks = new Map<string, (value: unknown) => void>();
+  mocks.listen.mockImplementation((name, callback) => {
+    callbacks.set(name, callback);
+    return Promise.resolve(vi.fn());
+  });
+  mocks.videos.mockResolvedValue([handoffSource] as never);
+  const accept: ((value: string) => void)[] = [];
+  mocks.job.mockImplementation(
+    () =>
+      new Promise<string>((resolve) => {
+        accept.push(resolve);
+      }),
+  );
+  const app = createSession();
+  await app.initialize();
+  await app.refresh();
+  app.job('mark', [handoffSource]);
+  expect(app.data.pendingKeys).toEqual(['9007199254740993:9007199254740995']);
+  app.job('delete', [handoffSource]);
+  expect(mocks.job).toHaveBeenCalledTimes(1);
+  accept[0]('job');
+  await Promise.resolve();
+  await Promise.resolve();
+  callbacks.get('file-job')?.({
+    generation: 3,
+    id: 'job',
+    kind: 'mark',
+    status: 'failed',
+    phase: 'failed',
+    name: handoffSource.name,
+    completed: 0,
+    count: 1,
+    message: 'destination_exists',
+    results: [
+      {
+        name: handoffSource.name,
+        status: 'retained',
+        message: 'destination_exists',
+      },
+    ],
+  });
+  await Promise.resolve();
+  await Promise.resolve();
+  expect(app.data.pendingKeys).toEqual([]);
+  expect(app.data.videos).toEqual([handoffSource]);
+  app.dispose();
+});
+it('does not dispatch a retired desktop-copy command from a stale caller', async () => {
+  const app = createSession();
+  await app.initialize();
+  app.job('copy' as never, [handoffSource], undefined, 3);
+  expect(mocks.job).not.toHaveBeenCalled();
+  expect(app.data.result).toBe('invalid_file_job');
+  app.dispose();
+});
+it('committed receipt releases a row even before delayed command acceptance returns', async () => {
+  const callbacks = new Map<string, (value: unknown) => void>();
+  mocks.listen.mockImplementation((name, callback) => {
+    callbacks.set(name, callback);
+    return Promise.resolve(vi.fn());
+  });
+  mocks.videos.mockResolvedValueOnce([handoffSource] as never);
+  let accept!: (value: string) => void;
+  mocks.job.mockImplementationOnce(
+    () =>
+      new Promise<string>((resolve) => {
+        accept = resolve;
+      }),
+  );
+  const app = createSession();
+  await app.initialize();
+  await app.refresh();
+  app.job('mark', [handoffSource]);
+  callbacks.get('file-handed-off')?.({
+    generation: 3,
+    job_id: 'delayed',
+    operation_id: 'done',
+    sequence: 1,
+    source_name: handoffSource.name,
+    source_identity: handoffSource.identity,
+  });
+  expect(app.data.pendingKeys).toEqual([]);
+  expect(app.data.videos).toEqual([]);
+  accept('delayed');
+  await Promise.resolve();
+  await Promise.resolve();
+  expect(app.data.jobs.some((job) => job.id === 'delayed')).toBe(false);
+  app.dispose();
+});
+
 it('retains an active accepted job after twenty-one terminal results', async () => {
   const callbacks = new Map<string, (value: unknown) => void>();
   mocks.listen.mockImplementation(
@@ -34,13 +177,11 @@ it('retains an active accepted job after twenty-one terminal results', async () 
   const queued = {
     id: 'held',
     generation: 3,
-    kind: 'copy',
+    kind: 'mark',
     status: 'queued',
     name: 'one.mp4',
     completed: 0,
     count: 1,
-    bytes: 0,
-    total: 10,
     message: '',
     results: [],
   };
@@ -73,17 +214,15 @@ it('does not revive an evicted terminal job from delayed acceptance or progress'
   const app = createSession();
   await app.initialize();
   await app.refresh();
-  app.job('copy', [video]);
+  app.job('mark', [video]);
   const terminal = {
     id: 'first',
     generation: 3,
-    kind: 'copy',
+    kind: 'mark',
     status: 'completed',
     name: 'one.mp4',
     completed: 1,
     count: 1,
-    bytes: 10,
-    total: 10,
     message: '',
     results: [],
   };
@@ -129,13 +268,11 @@ it('does not revive evicted terminal work from a delayed bootstrap', async () =>
   const terminal = {
     id: 'first',
     generation: 3,
-    kind: 'copy',
+    kind: 'mark',
     status: 'completed',
     name: 'one.mp4',
     completed: 1,
     count: 1,
-    bytes: 10,
-    total: 10,
     message: '',
     results: [],
   };
@@ -169,13 +306,11 @@ it('reconciles a bootstrap terminal result over an earlier queued event', async 
   const terminal = {
     id: 'first',
     generation: 3,
-    kind: 'copy',
+    kind: 'mark',
     status: 'completed',
     name: 'one.mp4',
     completed: 1,
     count: 1,
-    bytes: 10,
-    total: 10,
     message: '',
     results: [],
   };
@@ -207,13 +342,11 @@ it('file success cannot overwrite an unrelated verification message', async () =
   callbacks.get('file-job')?.({
     id: 'done',
     generation: 3,
-    kind: 'copy',
+    kind: 'mark',
     status: 'completed',
     name: 'one.mp4',
     completed: 1,
     count: 1,
-    bytes: 10,
-    total: 10,
     message: '',
     results: [],
   });
@@ -233,7 +366,7 @@ it('expires a bootstrap file success without listing, audio or capture work', as
   const notice = {
     key: { generation: 3, owner: 'job', operation_id: 'done' },
     revision: 1,
-    kind: 'copy',
+    kind: 'mark',
     outcome: 'completed',
     code: 'completed',
     warnings: [],
@@ -391,6 +524,8 @@ it('rename_invalidation_releases_loading_owner', async () => {
 });
 beforeEach(() => {
   vi.clearAllMocks();
+  mocks.videos.mockReset().mockResolvedValue([]);
+  mocks.job.mockReset().mockResolvedValue('accepted');
   mocks.bootstrap.mockResolvedValue({
     session: { ...initialSession, generation: 3, connected: true },
     settings: defaultSettings,
@@ -420,7 +555,7 @@ it('unsubscribes successful listeners when one subscription fails', async () => 
   const app = createSession();
   await app.initialize();
   app.dispose();
-  expect(stop).toHaveBeenCalledTimes(8);
+  expect(stop).toHaveBeenCalledTimes(9);
 });
 it('shares settings changes and consumes asynchronous feedback without extra sounds', async () => {
   const callbacks = new Map<string, (value: unknown) => void>();
@@ -439,7 +574,7 @@ it('shares settings changes and consumes asynchronous feedback without extra sou
     success_sound: true,
   });
   expect(app.data.settings.language).toBe('ar');
-  expect(app.data.settings.destination).toBe('C:\\Videos\\TakeDock');
+  expect(app.data.settings).not.toHaveProperty('destination');
   callbacks.get('verification-result')?.({
     generation: 3,
     sequence: 1,
@@ -546,12 +681,10 @@ it('restores shared progress in a new window without another startup update chec
       {
         id: 'copy-one',
         generation: 3,
-        kind: 'copy',
+        kind: 'mark',
         status: 'running',
-        phase: 'verifying',
+        phase: 'marking',
         name: 'one.mp4',
-        bytes: 10,
-        total: 10,
         completed: 0,
         count: 1,
         message: '',
@@ -562,7 +695,7 @@ it('restores shared progress in a new window without another startup update chec
   const app = createSession();
   await app.initialize();
   expect(app.data.windowName).toBe('Interview');
-  expect(app.data.jobs[0].phase).toBe('verifying');
+  expect(app.data.jobs[0].phase).toBe('marking');
   expect(mocks.checkUpdate).not.toHaveBeenCalled();
   app.dispose();
 });
@@ -585,7 +718,7 @@ it('makes accepted queued jobs available for cancellation without a worker resul
   const app = createSession();
   await app.initialize();
   await app.refresh();
-  app.job('copy', [
+  app.job('mark', [
     {
       name: 'one.mp4',
       size: 10,
@@ -619,7 +752,7 @@ it('invalidates an expired listing and running activity on connection replacemen
   callbacks.get('file-job')?.({
     id: 'old-job',
     generation: 3,
-    kind: 'copy',
+    kind: 'mark',
     status: 'queued',
     results: [],
   });
@@ -652,10 +785,10 @@ it('keeps the authoritative shared settings when save replies arrive in reverse 
         finish = resolve;
       }),
   );
-  const first = { ...defaultSettings, destination: 'C:\\First' };
+  const first = { ...defaultSettings, ready_delay_ms: 1000 };
   const second = {
     ...defaultSettings,
-    destination: 'C:\\Second',
+    ready_delay_ms: 1250,
     language: 'ar' as const,
   };
   const saving = app.save(first);

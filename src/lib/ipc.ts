@@ -49,10 +49,6 @@ export const ipc = {
   checkUpdate: () => invoke<UpdateInfo | null>('check_update'),
   installUpdate: (token: string) => invoke<void>('install_update', { token }),
   sound: (success: boolean) => invoke<void>('play_feedback', { success }),
-  folder: () =>
-    open({ directory: true, multiple: false }).then((path) =>
-      typeof path === 'string' ? path : null,
-    ),
   adb: () =>
     open({
       multiple: false,

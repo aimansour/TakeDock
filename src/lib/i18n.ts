@@ -15,13 +15,10 @@ const en = {
   minutes: 'minutes',
   seconds: 'seconds',
   milliseconds: 'milliseconds',
-  destination_setup_failed:
-    'The default destination could not be created. Choose a folder in Settings.',
   settings_save_failed: 'Settings could not be saved.',
   activity: 'Activity',
   activityProgress: 'Activity progress',
-  copying: 'Copying video',
-  verifying: 'Verifying copied video',
+  marking: 'Marking video',
   deleting: 'Deleting video',
   renaming: 'Renaming video',
   preparing: 'Preparing operation',
@@ -31,7 +28,7 @@ const en = {
   newWindow: 'New window',
   window_renamed: 'Window name saved',
   windowHelp:
-    'Ctrl+Shift+N opens another window. Phone, destination and settings are shared.',
+    'Ctrl+Shift+N opens another window. Phone and settings are shared.',
   invalid_window_name:
     'Enter a window name of 1 to 80 characters without control characters.',
   updates: 'Updates',
@@ -133,8 +130,11 @@ const en = {
   refresh: 'Refresh videos',
   selectAll: 'Select all completed videos',
   clear: 'Clear selection',
-  copy: 'Copy to computer',
-  move: 'Move to computer',
+  mark: 'Mark',
+  markSelected: 'Mark selected',
+  markHelp:
+    'Mark moves a video into DCIM/TakeDock on your phone and removes it from this list. Copy it yourself using Phone Link when you are ready.',
+  actions: 'Actions',
   delete: 'Delete from phone',
   rename: 'Rename video',
   name: 'Name',
@@ -161,8 +161,6 @@ const en = {
   running: 'In progress',
   result: 'Result',
   language: 'Language',
-  destination: 'Computer destination folder',
-  chooseFolder: 'Choose folder',
   adbPath: 'ADB executable (optional)',
   chooseAdb: 'Choose ADB executable',
   successSound: 'Play a sound on success',
@@ -189,14 +187,29 @@ const en = {
   available: 'Available',
   error: 'Error',
   noDevice: 'Connect one authorized phone to manage videos.',
-  destination_required: 'Choose a computer destination folder in Settings.',
   destination_exists:
     'A file with that name already exists at the destination.',
   source_changed: 'The phone file changed. Refresh and try again.',
   video_not_finalized:
     'This video has not finished saving or its container is unrecognized.',
-  copy_hash_mismatch:
-    'The copied file did not match the original. The phone original was retained.',
+  invalid_file_job: 'This file operation is no longer supported.',
+  file_busy: 'Another operation is already working on this video.',
+  handoff_failed:
+    'The video could not be handed off. It remains in the source folder.',
+  handoff_outcome_unknown:
+    'The handoff result could not be confirmed. Refresh the source list before taking further action.',
+  handoff_recovery_required:
+    'The handoff needs recovery. Reconnect and refresh the source list before taking further action.',
+  handoff_cross_device:
+    'The handoff folder must be on the same phone storage as OpenCamera.',
+  handoff_same_directory:
+    'The handoff folder must be separate from OpenCamera.',
+  handoff_directory_changed:
+    'A phone folder changed while preparing the handoff. Refresh before trying again.',
+  handoff_cleanup_pending:
+    'The video was handed off, but temporary operation metadata still needs cleanup.',
+  discard_file_handed_off:
+    'This take has already been handed off and cannot be deleted here.',
   operation_cancelled: 'Operation cancelled',
   session_replaced: 'The phone session changed. Refresh before trying again.',
   media_index_pending:
@@ -221,13 +234,10 @@ const ar: Record<keyof typeof en, string> = {
   minutes: 'دقيقة',
   seconds: 'ثانية',
   milliseconds: 'مللي ثانية',
-  destination_setup_failed:
-    'تعذر إنشاء مجلد الحفظ الافتراضي. اختر مجلدًا من الإعدادات.',
   settings_save_failed: 'تعذر حفظ الإعدادات.',
   activity: 'نشاط البرنامج',
   activityProgress: 'تقدم العملية',
-  copying: 'جارٍ نسخ الفيديو',
-  verifying: 'جارٍ التحقق من الفيديو المنسوخ',
+  marking: 'جارٍ تعليم المقطع',
   deleting: 'جارٍ حذف الفيديو',
   renaming: 'جارٍ تغيير اسم الفيديو',
   preparing: 'جارٍ تجهيز العملية',
@@ -236,8 +246,7 @@ const ar: Record<keyof typeof en, string> = {
   renameWindow: 'حفظ اسم النافذة',
   newWindow: 'نافذة جديدة',
   window_renamed: 'تم حفظ اسم النافذة',
-  windowHelp:
-    'يفتح Ctrl+Shift+N نافذة أخرى. الهاتف ومجلد الحفظ والإعدادات مشتركة.',
+  windowHelp: 'يفتح Ctrl+Shift+N نافذة أخرى. الهاتف والإعدادات مشتركة.',
   invalid_window_name: 'أدخل اسمًا للنافذة من حرف إلى 80 حرفًا دون محارف تحكم.',
   updates: 'التحديثات',
   updateHelp:
@@ -335,8 +344,11 @@ const ar: Record<keyof typeof en, string> = {
   refresh: 'تحديث الفيديوهات',
   selectAll: 'تحديد كل الفيديوهات المكتملة',
   clear: 'إلغاء التحديد',
-  copy: 'نسخ إلى الكمبيوتر',
-  move: 'نقل إلى الكمبيوتر',
+  mark: 'تعليم',
+  markSelected: 'تعليم المحدد',
+  markHelp:
+    'التعليم ينقل المقطع إلى DCIM/TakeDock داخل الهاتف ويزيله من هذه القائمة. انقله إلى الكمبيوتر بنفسك باستخدام Phone Link وقتما تريد.',
+  actions: 'إجراءات',
   delete: 'حذف من الهاتف',
   rename: 'إعادة تسمية الفيديو',
   name: 'الاسم',
@@ -363,8 +375,6 @@ const ar: Record<keyof typeof en, string> = {
   running: 'جارٍ التنفيذ',
   result: 'النتيجة',
   language: 'اللغة',
-  destination: 'مجلد الحفظ على الكمبيوتر',
-  chooseFolder: 'اختيار المجلد',
   adbPath: 'مسار برنامج ADB (اختياري)',
   chooseAdb: 'اختيار برنامج ADB',
   successSound: 'تشغيل صوت عند النجاح',
@@ -390,11 +400,25 @@ const ar: Record<keyof typeof en, string> = {
   available: 'متاح',
   error: 'خطأ',
   noDevice: 'وصّل هاتفًا واحدًا مصرحًا به لإدارة الفيديوهات.',
-  destination_required: 'اختر مجلد الحفظ على الكمبيوتر من الإعدادات.',
   destination_exists: 'يوجد ملف بنفس الاسم في الوجهة.',
   source_changed: 'تغير الملف على الهاتف. حدّث القائمة ثم حاول مجددًا.',
   video_not_finalized: 'لم يكتمل حفظ هذا الفيديو أو لم يُتعرف على تنسيقه.',
-  copy_hash_mismatch: 'النسخة لا تطابق الأصل. بقي الأصل على الهاتف.',
+  invalid_file_job: 'عملية الملفات هذه لم تعد مدعومة.',
+  file_busy: 'توجد عملية أخرى تعمل على هذا المقطع.',
+  handoff_failed: 'تعذر تعليم المقطع ونقله. بقي في مجلد المصدر.',
+  handoff_outcome_unknown:
+    'تعذر تأكيد نتيجة التعليم والنقل. حدّث قائمة المصدر قبل اتخاذ إجراء آخر.',
+  handoff_recovery_required:
+    'عملية التعليم والنقل تحتاج إلى استعادة. أعد الاتصال وحدّث قائمة المصدر قبل اتخاذ إجراء آخر.',
+  handoff_cross_device:
+    'يجب أن يكون مجلد TakeDock على نفس وحدة تخزين OpenCamera داخل الهاتف.',
+  handoff_same_directory: 'يجب أن يكون مجلد TakeDock منفصلًا عن OpenCamera.',
+  handoff_directory_changed:
+    'تغيّر مجلد على الهاتف أثناء تجهيز النقل. حدّث القائمة قبل المحاولة.',
+  handoff_cleanup_pending:
+    'نُقل المقطع، لكن بيانات العملية المؤقتة ما زالت تحتاج إلى تنظيف.',
+  discard_file_handed_off:
+    'تم تعليم هذه المحاولة ونقلها بالفعل، ولا يمكن حذفها من هنا.',
   operation_cancelled: 'أُلغيت العملية',
   session_replaced: 'تغير اتصال الهاتف. حدّث القائمة قبل المحاولة.',
   media_index_pending:

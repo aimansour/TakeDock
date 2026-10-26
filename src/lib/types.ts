@@ -49,7 +49,6 @@ export interface CommandReceipt {
 }
 export interface Settings {
   language: 'en' | 'ar';
-  destination: string;
   adb_path: string;
   success_sound: boolean;
   ready_sound: boolean;
@@ -64,7 +63,20 @@ export interface Video {
   identity: string;
   duration_ms?: number | null;
 }
-export type JobKind = 'copy' | 'move' | 'delete' | 'rename';
+export type JobKind = 'mark' | 'delete' | 'rename';
+export interface HandoffUpdate {
+  generation: number;
+  job_id: string;
+  operation_id: string;
+  sequence: number;
+  source_name: string;
+  source_identity: string;
+}
+export function withoutDesktopDestination(settings: Settings): Settings {
+  const current = { ...settings };
+  Reflect.deleteProperty(current, 'destination');
+  return current;
+}
 export interface ResultKey {
   generation: number;
   owner: 'job' | 'discard';
@@ -118,8 +130,6 @@ export interface JobEvent {
   status: string;
   phase?: string;
   name: string;
-  bytes: number;
-  total: number;
   completed: number;
   count: number;
   message: string;
@@ -148,7 +158,6 @@ export const initialSession: SessionState = {
 };
 export const defaultSettings: Settings = {
   language: 'en',
-  destination: '',
   adb_path: '',
   success_sound: false,
   ready_sound: true,

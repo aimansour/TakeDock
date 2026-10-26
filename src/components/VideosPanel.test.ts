@@ -100,8 +100,11 @@ it('allows batch operations and renders rename only for a single selection', asy
   ).toBeInTheDocument();
   await user.click(screen.getByRole('checkbox', { name: 'Select two.mp4' }));
   expect(screen.queryByRole('button', { name: 'Rename video' })).toBeNull();
-  await user.click(screen.getByRole('button', { name: 'Copy to computer' }));
-  expect(onJob).toHaveBeenCalledWith('copy', videos, undefined, 0);
+  expect(screen.queryByRole('button', { name: 'Copy to computer' })).toBeNull();
+  expect(screen.queryByRole('button', { name: 'Move to computer' })).toBeNull();
+  expect(onJob).not.toHaveBeenCalled();
+  await user.click(screen.getByRole('button', { name: 'Mark selected' }));
+  expect(onJob).toHaveBeenCalledWith('mark', videos, undefined, 0);
   await user.click(screen.getByRole('button', { name: 'Delete from phone' }));
   expect(onJob.mock.calls.length).toBe(1);
   await user.click(screen.getByRole('button', { name: 'Confirm deletion' }));
@@ -122,8 +125,75 @@ it('keeps unfinished videos discoverable without an actionable checkbox', () => 
     onJob: vi.fn(),
     onRefresh: vi.fn(),
   });
-  expect(screen.getByText('one.mp4')).toBeInTheDocument();
+  expect(screen.getByRole('cell', { name: 'one.mp4' })).toBeInTheDocument();
   expect(screen.queryByRole('checkbox')).toBeNull();
+});
+
+it('marks one row directly and protects pending and unfinished rows', async () => {
+  const user = userEvent.setup();
+  const onJob = vi.fn();
+  const { rerender } = render(VideosPanel, {
+    videos,
+    generation: 3,
+    onJob,
+    onRefresh: vi.fn(),
+  });
+  await user.click(screen.getByRole('button', { name: 'Mark one.mp4' }));
+  expect(onJob).toHaveBeenCalledWith('mark', [videos[0]], undefined, 3);
+  await rerender({
+    pendingKeys: ['1:1'],
+    videos: [videos[0], { ...videos[1], ready: false }],
+  });
+  expect(screen.getByRole('button', { name: 'Mark one.mp4' })).toBeDisabled();
+  expect(screen.getByRole('button', { name: 'Mark two.mp4' })).toBeDisabled();
+  expect(screen.getByRole('cell', { name: 'one.mp4' })).toBeInTheDocument();
+  expect(
+    screen.getByRole('checkbox', { name: 'Select one.mp4' }),
+  ).toBeDisabled();
+});
+it.each(['next', 'previous', 'empty'] as const)(
+  'retains logical focus on %s after confirmed row removal',
+  async (where) => {
+    const { rerender } = render(VideosPanel, {
+      videos,
+      onJob: vi.fn(),
+      onRefresh: vi.fn(),
+    });
+    const name = where === 'previous' ? 'two.mp4' : 'one.mp4';
+    screen.getByRole('button', { name: `Mark ${name}` }).focus();
+    const remaining =
+      where === 'empty' ? [] : where === 'next' ? [videos[1]] : [videos[0]];
+    await rerender({ videos: remaining });
+    expect(
+      screen.getByRole('button', {
+        name:
+          where === 'empty' ? 'Refresh videos' : `Mark ${remaining[0].name}`,
+      }),
+    ).toHaveFocus();
+  },
+);
+it('does not steal unrelated focus when a background handoff removes a row', async () => {
+  const { rerender } = render(VideosPanel, {
+    videos,
+    onJob: vi.fn(),
+    onRefresh: vi.fn(),
+  });
+  const refresh = screen.getByRole('button', { name: 'Refresh videos' });
+  refresh.focus();
+  await rerender({ videos: [videos[1]] });
+  expect(refresh).toHaveFocus();
+});
+it('returns a disappearing batch action to the stable toolbar after the last source leaves', async () => {
+  const user = userEvent.setup();
+  const { rerender } = render(VideosPanel, {
+    videos,
+    onJob: vi.fn(),
+    onRefresh: vi.fn(),
+  });
+  await user.click(screen.getByRole('checkbox', { name: 'Select one.mp4' }));
+  await user.click(screen.getByRole('button', { name: 'Mark selected' }));
+  await rerender({ videos: [] });
+  expect(screen.getByRole('button', { name: 'Refresh videos' })).toHaveFocus();
 });
 it('retains the selected focused native checkbox and uses fresh rename metadata', async () => {
   const user = userEvent.setup();
@@ -148,8 +218,8 @@ it('retains the selected focused native checkbox and uses fresh rename metadata'
   );
   expect(checkbox).toBeChecked();
   expect(checkbox).toHaveFocus();
-  await user.click(screen.getByRole('button', { name: 'Copy to computer' }));
-  expect(onJob).toHaveBeenLastCalledWith('copy', [renamed], undefined, 3);
+  await user.click(screen.getByRole('button', { name: 'Mark selected' }));
+  expect(onJob).toHaveBeenLastCalledWith('mark', [renamed], undefined, 3);
   await rerender({ language: 'ar' });
   expect(checkbox).toHaveAccessibleName(/renamed\.mp4/);
   expect(screen.getAllByRole('checkbox')[0]).toBe(checkbox);

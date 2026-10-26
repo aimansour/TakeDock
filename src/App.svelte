@@ -81,6 +81,7 @@
     />{/if}
   {#if data.view === 'videos'}<VideosPanel
       videos={data.videos}
+      pendingKeys={data.pendingKeys}
       generation={data.listingGeneration}
       connected={data.session.connected}
       loading={data.loading}
@@ -91,7 +92,6 @@
   {#if data.view === 'settings'}<SettingsPanel
       settings={data.settings}
       onSave={(settings) => void app.save(settings)}
-      onFolder={ipc.folder}
       onAdb={ipc.adb}
       onReconnect={app.reconnect}
       onError={app.fail}
