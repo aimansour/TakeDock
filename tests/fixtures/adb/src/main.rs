@@ -320,6 +320,12 @@ fn main() {
     }
 }
 fn file_command(root: &Path, args: &[String]) -> Result<(), String> {
+    let mut trace = fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(root.join("helper-calls.jsonl"))
+        .map_err(|e| e.to_string())?;
+    writeln!(trace, "{}", json!(args)).map_err(|e| e.to_string())?;
     let videos = takedock_files::Root::open(&root.join("videos"))?;
     let borrowed = args.iter().map(String::as_str).collect::<Vec<_>>();
     match borrowed.as_slice() {
@@ -383,51 +389,13 @@ fn file_command(root: &Path, args: &[String]) -> Result<(), String> {
                 },
             )?;
         }
-        [kind, name, expected] if ["read", "hash", "delete"].contains(kind) => {
+        ["delete", name, expected] => {
             let identity = serde_json::from_str(expected).map_err(|e| e.to_string())?;
             if !videos.video_ready(name)? {
                 return Err("video_not_finalized".into());
             }
-            match *kind {
-                "read" => {
-                    fs::write(root.join("read-started"), b"").unwrap();
-                    if root.join("fail-read").exists() {
-                        return Err("fixture_transfer_failure".into());
-                    }
-                    if root.join("hold-read-tail").exists() {
-                        let mut held = HeldTailWriter {
-                            output: SlowWriter(io::stdout().lock()),
-                            root: root.to_path_buf(),
-                            written: 0,
-                        };
-                        videos.read(name, &identity, &mut held)?;
-                    } else if root.join("slow-read").exists() {
-                        let mut slow = SlowWriter(io::stdout().lock());
-                        videos.read(name, &identity, &mut slow)?;
-                    } else {
-                        videos.read(name, &identity, &mut io::stdout().lock())?;
-                    }
-                }
-                "hash" => {
-                    fs::write(root.join("hash-started"), b"").unwrap();
-                    while root.join("hold-hash").exists() {
-                        thread::sleep(Duration::from_millis(10));
-                    }
-                    println!(
-                        "{}",
-                        if root.join("bad-hash").exists() {
-                            "0".repeat(64)
-                        } else {
-                            videos.hash(name, &identity)?
-                        }
-                    );
-                }
-                "delete" => {
-                    fs::write(root.join("delete-called"), name).unwrap();
-                    videos.delete(name, &identity)?;
-                }
-                _ => unreachable!(),
-            }
+            fs::write(root.join("delete-called"), name).unwrap();
+            videos.delete(name, &identity)?;
         }
         ["rename", name, new_name, expected] => {
             if !videos.video_ready(name)? {
@@ -592,42 +560,5 @@ fn watch_files(root: &Path, videos: &takedock_files::Root, stream: &str) -> Resu
             heartbeat = Instant::now();
         }
         thread::sleep(Duration::from_millis(25));
-    }
-}
-struct SlowWriter<W: Write>(W);
-struct HeldTailWriter<W: Write> {
-    output: SlowWriter<W>,
-    root: PathBuf,
-    written: usize,
-}
-impl<W: Write> Write for HeldTailWriter<W> {
-    fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
-        if self.written >= 64 * 1024 {
-            fs::write(self.root.join("read-prefix-held"), b"")?;
-            while self.root.join("hold-read-tail").exists() {
-                thread::sleep(Duration::from_millis(10));
-            }
-        }
-        let limit = if self.written < 64 * 1024 {
-            bytes.len().min(64 * 1024 - self.written)
-        } else {
-            bytes.len()
-        };
-        let size = self.output.write(&bytes[..limit])?;
-        self.written += size;
-        Ok(size)
-    }
-    fn flush(&mut self) -> io::Result<()> {
-        self.output.flush()
-    }
-}
-impl<W: Write> Write for SlowWriter<W> {
-    fn write(&mut self, buffer: &[u8]) -> io::Result<usize> {
-        thread::sleep(Duration::from_millis(20));
-        let size = buffer.len().min(4096);
-        self.0.write(&buffer[..size])
-    }
-    fn flush(&mut self) -> io::Result<()> {
-        self.0.flush()
     }
 }

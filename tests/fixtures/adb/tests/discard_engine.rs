@@ -85,7 +85,7 @@ impl Recording {
 impl Drop for Recording {
     fn drop(&mut self) {
         self.fixture.unflag("hold-delete-prepared");
-        self.fixture.unflag("hold-hash");
+        self.fixture.unflag("hold-handoff-before-permit");
         self.fixture.unflag("hold-delete-result");
         self.fixture.unflag("hold-index");
         self.engine.shutdown();
@@ -328,7 +328,7 @@ fn finalization_waits_without_retrying_the_stop() {
     assert_eq!(app.commands().len(), 2);
 }
 #[test]
-fn held_copy_does_not_delay_ordinary_capture_or_revive_cancelled_delete() {
+fn held_handoff_does_not_delay_ordinary_capture_or_revive_cancelled_delete() {
     let app = Recording::new(&[]);
     std::fs::write(app.fixture.video("old.mp4"), movie()).unwrap();
     let videos = app.files.list(app.engine.lease().unwrap()).unwrap();
@@ -336,17 +336,17 @@ fn held_copy_does_not_delay_ordinary_capture_or_revive_cancelled_delete() {
         .into_iter()
         .find(|video| video.name == "old.mp4")
         .unwrap();
-    app.fixture.flag("hold-hash");
+    app.fixture.flag("hold-handoff-before-permit");
     app.files
         .start_job(
             app.engine.lease().unwrap(),
-            JobKind::Copy,
+            JobKind::Mark,
             vec![old],
-            app.fixture.path().join("destination"),
+            None,
             None,
         )
         .unwrap();
-    wait(|| app.fixture.path().join("hash-started").exists());
+    wait(|| app.fixture.path().join("handoff-started").exists());
     // The background watcher must establish a fresh complete idle manifest after this unrelated write.
     wait(|| app.engine.snapshot().discard.reason == "discard_ready_for_start");
     let take = app.start();
@@ -356,8 +356,8 @@ fn held_copy_does_not_delay_ordinary_capture_or_revive_cancelled_delete() {
     wait(|| app.engine.snapshot().discard.phase == DiscardPhase::Deleting);
     app.engine.dispatch(RecordingAction::Start).unwrap();
     wait(|| app.commands().len() == 3);
-    app.fixture.unflag("hold-hash");
-    wait(|| app.fixture.path().join("destination/old.mp4").exists());
+    app.fixture.unflag("hold-handoff-before-permit");
+    wait(|| app.fixture.path().join("handoff/old.mp4").exists());
     wait(|| {
         app.events.lock().unwrap().iter().any(|(event, value)| {
             event == "file-job"

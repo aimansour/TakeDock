@@ -105,24 +105,25 @@ fn authorized_delete_with_lost_result_is_unknown() {
 fn guarded_delete_is_serialized_with_ordinary_jobs() {
     let fixture = Fixture::new();
     std::fs::write(fixture.video("take.mp4"), movie()).unwrap();
-    fixture.flag("hold-hash");
+    std::fs::write(fixture.video("old.mp4"), movie()).unwrap();
+    fixture.flag("hold-handoff-before-permit");
     let files = service(&fixture);
     files
         .start_job(
             fixture.lease.clone(),
-            JobKind::Copy,
-            vec![video(&fixture, "take.mp4")],
-            fixture.path().join("destination"),
+            JobKind::Mark,
+            vec![video(&fixture, "old.mp4")],
+            None,
             None,
         )
         .unwrap();
-    wait(|| fixture.path().join("hash-started").exists());
+    wait(|| fixture.path().join("handoff-started").exists());
     let (_, results) = discard(&files, &fixture, Arc::new(AtomicBool::new(true)));
     assert!(!fixture.path().join("delete-prepared").exists());
-    fixture.unflag("hold-hash");
+    fixture.unflag("hold-handoff-before-permit");
     assert!(matches!(outcome(&results), DeleteOutcome::Deleted));
     assert_eq!(
-        std::fs::read(fixture.path().join("destination/take.mp4")).unwrap(),
+        std::fs::read(fixture.path().join("handoff/old.mp4")).unwrap(),
         movie()
     );
     files.shutdown();

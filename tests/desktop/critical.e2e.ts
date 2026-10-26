@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdirSync, unlinkSync, writeFileSync } from 'node:fs';
+import { unlinkSync, writeFileSync } from 'node:fs';
 import { spawn } from 'node:child_process';
 import { browser, $, $$ } from '@wdio/globals';
 import {
@@ -18,10 +18,17 @@ import {
   settingsPath,
   waitForBaseline,
   deleteCalls,
-  listedVideos,
   fileResults,
 } from './fixtures';
 
+function xpathLiteral(value: string): string {
+  return value.includes("'")
+    ? `concat('${value.split("'").join(`',"'",'`)}')`
+    : `'${value}'`;
+}
+function sourceRow(name: string) {
+  return $(`//tbody/tr[td[2]/bdi[text()=${xpathLiteral(name)}]]`);
+}
 describe('TakeDock release desktop acceptance', () => {
   it('launches offline with named keyboard controls and silent success defaults', async () => {
     await $('h1').waitForExist();
@@ -261,24 +268,43 @@ describe('TakeDock release desktop acceptance', () => {
       false,
     );
   });
-  it('selects two videos, hides batch rename and copies verified bytes through Rust IPC', async () => {
+  it('hands off marked sources once, preserves shared results and never manages the handoff collection', async () => {
     await restartFixture(true);
     await button('Start video').waitForExist();
     await waitForBaseline();
+    const originals = ["a'b.mp4", 'رحلة.mp4'];
+    const expected = new Map(
+      originals.map((name) => [name, hash(join(fixtureRoot, 'videos', name))]),
+    );
     await shortcut('v');
     await waitFor(
       async () => (await $$('tbody input[type="checkbox"]')).length === 2,
     );
-    const boxes = await $$('tbody input[type="checkbox"]');
-    assert.match(await $('tbody').getText(), /100 milliseconds/);
-    await boxes[0].click();
-    assert.equal(await button('Rename video').isExisting(), true);
-    await boxes[1].click();
+    assert.equal(await button('Copy to computer').isExisting(), false);
+    assert.equal(await button('Move to computer').isExisting(), false);
+    const arabic = await sourceRow('رحلة.mp4').$('input');
+    await arabic.click();
+    const originalId = arabic.elementId;
+    await button('Rename video').click();
+    await $('#new-name').setValue('renamed-رحلة');
+    await button('Save name').click();
+    const renamed = await sourceRow('renamed-رحلة.mp4').$('input');
+    await renamed.waitForExist();
+    await renamed.waitForEnabled();
+    assert.equal(renamed.elementId, originalId);
+    assert.equal(await renamed.getComputedLabel(), 'Select renamed-رحلة.mp4');
+    assert.equal(
+      hash(join(fixtureRoot, 'videos', 'renamed-رحلة.mp4')),
+      expected.get('رحلة.mp4'),
+    );
+    await button('Select all completed videos').click();
     assert.equal(await button('Rename video').isExisting(), false);
-    flag('hold-hash');
+    flag('hold-handoff-before-permit');
     try {
-      await button('Copy to computer').click();
-      await waitFor(() => existsSync(join(fixtureRoot, 'hash-started')));
+      await button('Mark selected').click();
+      await waitFor(() => existsSync(join(fixtureRoot, 'handoff-started')));
+      assert.equal(await sourceRow("a'b.mp4").$('input').isEnabled(), false);
+      assert.equal(await $('#activity-progress').getAttribute('value'), null);
       await button('Recording').click();
       await button('Start video').waitForExist();
       await button('Start video').click();
@@ -288,41 +314,47 @@ describe('TakeDock release desktop acceptance', () => {
           (await $('#speech-readiness').getAttribute('data-readiness')) ===
           'ready',
       );
-      assert.equal(existsSync(join(fixtureRoot, 'hold-hash')), true);
+      assert.equal(
+        await browser.execute(() =>
+          document.activeElement?.textContent?.trim(),
+        ),
+        'Stop',
+      );
+      assert.equal(
+        existsSync(join(fixtureRoot, 'hold-handoff-before-permit')),
+        true,
+      );
       await button('Stop').click();
       await waitFor(() => commands().length === 2);
-      await button('Start video').waitForExist();
     } finally {
-      if (existsSync(join(fixtureRoot, 'hold-hash')))
-        unlinkSync(join(fixtureRoot, 'hold-hash'));
+      unlinkSync(join(fixtureRoot, 'hold-handoff-before-permit'));
     }
     await shortcut('v');
-    await waitFor(() =>
-      ["a'b.mp4", 'رحلة.mp4'].every((name) =>
-        existsSync(join(fixtureRoot, 'destination', name)),
-      ),
-    );
-    for (const name of ["a'b.mp4", 'رحلة.mp4'])
+    for (const [source, target] of [
+      ["a'b.mp4", "a'b.mp4"],
+      ['رحلة.mp4', 'renamed-رحلة.mp4'],
+    ]) {
+      await waitFor(() => existsSync(join(fixtureRoot, 'handoff', target)));
       assert.equal(
-        hash(join(fixtureRoot, 'destination', name)),
-        hash(join(fixtureRoot, 'videos', name)),
+        hash(join(fixtureRoot, 'handoff', target)),
+        expected.get(source),
       );
-    await waitFor(async () => (await $('main').getText()).includes('2/2'));
-    // The per-file 2/2 event can precede the job's terminal event. During
-    // verification the progress element is intentionally indeterminate.
+      assert.equal(existsSync(join(fixtureRoot, 'videos', target)), false);
+      await waitFor(async () => !(await sourceRow(target).isExisting()));
+    }
     await waitFor(
       async () =>
         (await $('#activity-progress').getAttribute('value')) === '100',
     );
-    assert.equal(await $('#activity-progress').getAttribute('value'), '100');
-    const history = await $('.file-results-panel details');
-    await history.waitForExist();
-    assert.equal(await history.getAttribute('open'), null);
-    const originalWindow = await browser.getWindowHandle();
     const shared = (await fileResults()).notices.find(
-      (notice) => notice.kind === 'copy',
+      (notice) => notice.kind === 'mark' && notice.count === 2,
     );
     assert.ok(shared?.expires_at_ms);
+    assert.equal(
+      await $('.file-results-panel details').getAttribute('open'),
+      null,
+    );
+    const originalWindow = await browser.getWindowHandle();
     await shortcut('n');
     await waitFor(async () => (await browser.getWindowHandles()).length === 2);
     const otherWindow = (await browser.getWindowHandles()).find(
@@ -340,344 +372,137 @@ describe('TakeDock release desktop acceptance', () => {
     await waitFor(
       async () => (await $('#activity-progress').getAttribute('value')) === '0',
     );
-    assert.match(await $('.activity-panel').getText(), /Ready/);
-    assert.equal((await $$('.file-result-notice')).length, 0);
     await $('.file-results-panel summary').click();
-    await shortcut('n');
-    await waitFor(async () => (await browser.getWindowHandles()).length === 2);
-    await browser.switchToWindow(
-      (await browser.getWindowHandles()).find(
-        (handle) => handle !== originalWindow,
-      )!,
-    );
-    await $('.file-results-panel').waitForExist();
-    assert.equal((await $$('.file-result-notice')).length, 0);
-    assert.equal(
-      await $('.file-results-panel details').getAttribute('open'),
-      null,
-    );
-    await browser.closeWindow();
-    await browser.switchToWindow(originalWindow);
-    assert.match(await history.getText(), /2\/2/);
+    assert.match(await $('.file-results-panel details').getText(), /2\/2/);
     await $('.file-results-panel summary').click();
-    assert.equal(deleteCalls().length, 0);
-    assert.equal(
-      existsSync(join(fixtureRoot, 'videos', 'take-0001.mp4')),
-      true,
-    );
     assert.equal(
       (await $$('[aria-live], [role="status"], [role="alert"]')).length,
       0,
     );
-    // Preserve the completed copy's 100% assertion before a newer cancelled
-    // job legitimately becomes the Activity panel's current operation.
-    await $(
-      '//label[span[normalize-space(.)="Select take-0001.mp4"]]/input',
-    ).click();
-    unlinkSync(join(fixtureRoot, 'hash-started'));
-    flag('hold-hash');
-    try {
-      await button('Copy to computer').click();
-      await waitFor(() => existsSync(join(fixtureRoot, 'hash-started')));
-      await button('Recording').click();
-      await button('Start video').waitForExist();
-      await button('Start video').click();
-      await $('input[name="discard-take"]').waitForExist();
-      await $('input[name="discard-take"]').click();
-      await button('Stop and delete').click();
-      await $('[data-discard-phase="deleting"]').waitForExist();
-      assert.equal(deleteCalls().length, 0);
-      assert.equal(existsSync(join(fixtureRoot, 'hold-hash')), true);
-      await button('Start video').click();
-      await waitFor(() => commands().length === 5);
-      await button('Stop').click();
-      await waitFor(() => commands().length === 6);
-    } finally {
-      if (existsSync(join(fixtureRoot, 'hold-hash')))
-        unlinkSync(join(fixtureRoot, 'hold-hash'));
-    }
+    await sourceRow('take-0001.mp4').$('button[data-mark]').click();
     await waitFor(() =>
-      existsSync(join(fixtureRoot, 'destination', 'take-0001.mp4')),
+      existsSync(join(fixtureRoot, 'handoff', 'take-0001.mp4')),
     );
-    await waitFor(async () =>
-      (await $('.activity-panel').getText()).includes('Cancelled'),
-    );
+    await button('Recording').click();
+    await waitFor(async () => {
+      const result = await browser.execute(async () => {
+        const api = (
+          window as unknown as {
+            __TAURI_INTERNALS__: {
+              invoke: (name: string) => Promise<{
+                session: { discard: { eligible: boolean; reason: string } };
+              }>;
+            };
+          }
+        ).__TAURI_INTERNALS__;
+        return (await api.invoke('bootstrap')).session.discard;
+      });
+      return !result.eligible && result.reason === 'discard_file_handed_off';
+    });
     assert.equal(deleteCalls().length, 0);
-    assert.equal(
-      existsSync(join(fixtureRoot, 'videos', 'take-0002.mp4')),
-      true,
-    );
-    assert.equal(
-      existsSync(join(fixtureRoot, 'videos', 'take-0003.mp4')),
-      true,
-    );
-    assert.equal(
-      hash(join(fixtureRoot, 'destination', 'take-0001.mp4')),
-      hash(join(fixtureRoot, 'videos', 'take-0001.mp4')),
-    );
     await shortcut('v');
-    const initialVideo = (await listedVideos()).find(
-      (video) => video.name === 'رحلة.mp4',
+    const bytes = readFileSync(join(fixtureRoot, 'handoff', "a'b.mp4"));
+    writeFileSync(join(fixtureRoot, 'videos', 'delete.mp4'), bytes);
+    await button('Refresh videos').click();
+    await sourceRow('delete.mp4').$('input').waitForExist();
+    await sourceRow('delete.mp4').$('input').click();
+    await button('Delete from phone').click();
+    await button('Confirm deletion').click();
+    await waitFor(() => !existsSync(join(fixtureRoot, 'videos', 'delete.mp4')));
+    writeFileSync(join(fixtureRoot, 'videos', 'collision.mp4'), bytes);
+    writeFileSync(
+      join(fixtureRoot, 'handoff', 'collision.mp4'),
+      'previous destination',
     );
-    assert.ok(initialVideo);
-    const sourceBox = await $(
-      '//label[span[normalize-space(.)="Select رحلة.mp4"]]/input',
-    );
-    await sourceBox.waitForExist();
-    if (await button('Clear selection').isExisting())
-      await button('Clear selection').click();
-    await sourceBox.click();
-    const originalElementId = sourceBox.elementId;
-    if (existsSync(join(fixtureRoot, 'index-started')))
-      unlinkSync(join(fixtureRoot, 'index-started'));
-    if (existsSync(join(fixtureRoot, 'hash-started')))
-      unlinkSync(join(fixtureRoot, 'hash-started'));
-    flag('hold-hash');
-    flag('hold-index');
-    try {
-      await button('Rename video').click();
-      await $('#new-name').setValue('renamed-رحلة');
-      await button('Save name').click();
-      await waitFor(() => existsSync(join(fixtureRoot, 'index-started')));
-      await browser.waitUntil(
-        async () =>
-          (await sourceBox.getComputedLabel()) === 'Select renamed-رحلة.mp4',
-        {
-          timeout: 1000,
-          interval: 50,
-          timeoutMsg:
-            'Confirmed rename did not reach the native label while indexing held the worker',
-        },
-      );
-      const renamedBox = await $(
-        '//label[span[normalize-space(.)="Select renamed-رحلة.mp4"]]/input',
-      );
-      assert.equal(renamedBox.elementId, originalElementId);
-      assert.equal(await renamedBox.isSelected(), true);
-      await button('Copy to computer').click();
-      await browser.execute(
-        (element: HTMLElement) => element.focus(),
-        renamedBox,
-      );
-      assert.equal(existsSync(join(fixtureRoot, 'hold-index')), true);
-      assert.equal(
-        (await $$('[aria-live], [role="status"], [role="alert"]')).length,
-        0,
-      );
-    } finally {
-      if (existsSync(join(fixtureRoot, 'hold-index')))
-        unlinkSync(join(fixtureRoot, 'hold-index'));
-    }
-    await waitFor(() => existsSync(join(fixtureRoot, 'hash-started')));
-    try {
-      await button('Recording').click();
-      await button('Start video').click();
-      await waitFor(() => commands().length === 7);
-      await button('Stop').click();
-      await waitFor(() => commands().length === 8);
-      await shortcut('v');
-      const checkbox = await $(
-        '//label[span[normalize-space(.)="Select renamed-رحلة.mp4"]]/input',
-      );
-      await checkbox.waitForExist();
-      if (!(await checkbox.isSelected())) await checkbox.click();
-      await browser.execute(
-        (element: HTMLElement) => element.focus(),
-        checkbox,
-      );
-    } finally {
-      if (existsSync(join(fixtureRoot, 'hold-hash')))
-        unlinkSync(join(fixtureRoot, 'hold-hash'));
-    }
-    await waitFor(() =>
-      existsSync(join(fixtureRoot, 'destination', 'renamed-رحلة.mp4')),
-    );
+    await button('Refresh videos').click();
+    await sourceRow('collision.mp4').$('button[data-mark]').waitForExist();
+    await sourceRow('collision.mp4').$('button[data-mark]').click();
     await waitFor(async () =>
-      (await fileResults()).history.some(
-        (notice) =>
-          notice.kind === 'copy' &&
-          notice.name === 'renamed-رحلة.mp4' &&
-          notice.outcome === 'completed',
+      (await fileResults()).notices.some((notice) =>
+        notice.results.some(
+          (result) =>
+            result.name === 'collision.mp4' && result.status === 'retained',
+        ),
       ),
     );
     assert.equal(
-      await browser.execute(() => document.activeElement?.getAttribute('type')),
-      'checkbox',
+      hash(join(fixtureRoot, 'videos', 'collision.mp4')),
+      expected.get("a'b.mp4"),
     );
     assert.equal(
-      hash(join(fixtureRoot, 'destination', 'renamed-رحلة.mp4')),
-      hash(join(fixtureRoot, 'videos', 'renamed-رحلة.mp4')),
+      readFileSync(join(fixtureRoot, 'handoff', 'collision.mp4'), 'utf8'),
+      'previous destination',
     );
-    const renamed = (await listedVideos()).find(
-      (video) => video.name === 'renamed-رحلة.mp4',
+    assert.equal(await sourceRow('collision.mp4').isExisting(), true);
+    writeFileSync(join(fixtureRoot, 'videos', 'unknown.mp4'), bytes);
+    flag('drop-handoff-result');
+    await button('Refresh videos').click();
+    await sourceRow('unknown.mp4').$('button[data-mark]').waitForExist();
+    await sourceRow('unknown.mp4').$('button[data-mark]').click();
+    await waitFor(async () =>
+      (await fileResults()).notices.some(
+        (notice) => notice.outcome === 'outcome_unknown',
+      ),
     );
-    assert.ok(renamed);
-    for (const part of ['device', 'inode']) {
-      const exact = new RegExp(`"${part}":(\\d+)`);
-      assert.equal(
-        renamed.identity.match(exact)?.[1],
-        initialVideo.identity.match(exact)?.[1],
-      );
-    }
-    await button('Copy to computer').click();
+    unlinkSync(join(fixtureRoot, 'drop-handoff-result'));
+    assert.equal(existsSync(join(fixtureRoot, 'videos', 'unknown.mp4')), false);
+    assert.equal(
+      hash(join(fixtureRoot, 'handoff', 'unknown.mp4')),
+      expected.get("a'b.mp4"),
+    );
+    const calls = readFileSync(join(fixtureRoot, 'helper-calls.jsonl'), 'utf8')
+      .trim()
+      .split('\n')
+      .map((line) => JSON.parse(line) as string[]);
+    assert.equal(
+      calls.filter(
+        (args) => args[0] === 'handoff-guarded' && args[1] === 'unknown.mp4',
+      ).length,
+      1,
+    );
+    assert.equal(
+      calls.some((args) => ['read', 'hash'].includes(args[0])),
+      false,
+    );
+    writeFileSync(join(fixtureRoot, 'videos', 'warning.mp4'), bytes);
+    flag('fail-handoff-index');
+    await button('Refresh videos').click();
+    await sourceRow('warning.mp4').$('button[data-mark]').waitForExist();
+    await sourceRow('warning.mp4').$('button[data-mark]').click();
     await waitFor(async () =>
       (await fileResults()).notices.some(
         (notice) =>
-          notice.outcome === 'failed' && notice.name === 'renamed-رحلة.mp4',
+          notice.name === 'warning.mp4' &&
+          notice.warnings.includes('media_index_pending'),
       ),
     );
-    const failure = (await fileResults()).notices.find(
-      (notice) =>
-        notice.outcome === 'failed' && notice.name === 'renamed-رحلة.mp4',
-    )!;
-    const failureWindow = await browser.getWindowHandle();
-    await shortcut('n');
-    await waitFor(async () => (await browser.getWindowHandles()).length === 2);
-    const observerWindow = (await browser.getWindowHandles()).find(
-      (handle) => handle !== failureWindow,
-    )!;
-    await browser.switchToWindow(observerWindow);
-    const failureCard = () =>
-      $(`article[data-operation-id="${failure.key.operation_id}"]`);
-    await failureCard().waitForExist();
-    const protectedHide = await failureCard().$('button');
-    await browser.execute(
-      (element: HTMLElement) => element.focus(),
-      protectedHide,
+    unlinkSync(join(fixtureRoot, 'fail-handoff-index'));
+    const persistent = (await fileResults()).notices.filter((notice) =>
+      ['retained', 'outcome_unknown', 'warning'].includes(notice.outcome),
     );
+    assert.ok(persistent.length >= 3);
+    assert.ok(persistent.every((notice) => notice.expires_at_ms === null));
     assert.equal(
-      await browser.execute(
-        (element: HTMLElement) => document.activeElement === element,
-        protectedHide,
-      ),
-      true,
-      'The observer window must establish focus before later results arrive',
+      readFileSync(join(fixtureRoot, 'handoff', 'unrelated.mp4'), 'utf8'),
+      'hands off',
     );
-    await browser.switchToWindow(failureWindow);
-    await button('Rename video').click();
-    await $('#new-name').setValue('final-رحلة');
-    await button('Save name').click();
-    await waitFor(async () =>
-      (await fileResults()).notices.some(
-        (notice) =>
-          notice.kind === 'rename' &&
-          notice.outcome === 'completed' &&
-          notice.results.some(
-            (item) => item.destination_name === 'final-رحلة.mp4',
-          ),
-      ),
-    );
-    await waitFor(
-      async () =>
-        !(await fileResults()).notices.some(
-          (notice) => notice.expires_at_ms != null,
-        ),
-    );
-    assert.equal(await failureCard().isExisting(), true);
-    await browser.switchToWindow(observerWindow);
-    assert.equal(
-      await browser.execute(
-        (element: HTMLElement) => document.activeElement === element,
-        protectedHide,
-      ),
-      true,
-      'New results and passive expiry must preserve the observer focus',
-    );
-    await browser.switchToWindow(failureWindow);
-    await failureCard().$('button').click();
-    await waitFor(
-      async () =>
-        !(await fileResults()).notices.some(
-          (notice) => notice.key.operation_id === failure.key.operation_id,
-        ),
-    );
-    await browser.switchToWindow(observerWindow);
-    assert.equal(
-      (await failureCard().$('button')).elementId,
-      protectedHide.elementId,
-    );
-    await browser.execute(() =>
-      document
-        .querySelector<HTMLElement>('.file-results-panel summary')
-        ?.focus(),
-    );
-    await waitFor(async () => !(await failureCard().isExisting()));
-    await browser.closeWindow();
-    await browser.switchToWindow(failureWindow);
-
-    const collisionDirectory = join(fixtureRoot, 'collision-destination');
-    mkdirSync(collisionDirectory);
-    await shortcut('s');
-    await $('#destination').waitForExist();
-    await $('#destination').setValue(collisionDirectory);
-    await button('Save settings').click();
+    await browser.reloadSession();
+    await $('h1').waitForExist();
+    await button('Start video').waitForExist();
     await shortcut('v');
-    await $('tbody').waitForExist();
-    for (const checked of await $$('tbody input[type="checkbox"]:checked'))
-      await checked.click();
-    const collisionName = 'final-رحلة.mp4';
-    const collisionSelection = await $(
-      `//label[span[normalize-space(.)="Select ${collisionName}"]]/input`,
-    );
-    await collisionSelection.waitForExist();
-    await collisionSelection.click();
-    assert.equal((await $$('tbody input[type="checkbox"]:checked')).length, 1);
-    const collisionSource = (await listedVideos()).find(
-      (video) => video.name === collisionName,
-    )!;
-    const sourceHash = hash(join(fixtureRoot, 'videos', collisionName));
-    const collisionTarget = join(collisionDirectory, collisionName);
-    if (existsSync(join(fixtureRoot, 'hash-started')))
-      unlinkSync(join(fixtureRoot, 'hash-started'));
-    flag('hold-hash');
-    try {
-      await button('Copy to computer').click();
-      await waitFor(() => existsSync(join(fixtureRoot, 'hash-started')));
-      writeFileSync(collisionTarget, 'keep the destination sentinel');
-    } finally {
-      if (existsSync(join(fixtureRoot, 'hold-hash')))
-        unlinkSync(join(fixtureRoot, 'hold-hash'));
-    }
-    await waitFor(async () =>
-      (await fileResults()).notices.some(
-        (notice) =>
-          notice.kind === 'copy' &&
-          notice.name === collisionName &&
-          notice.outcome === 'failed',
-      ),
-    );
-    const collision = (await fileResults()).notices.find(
-      (notice) =>
-        notice.kind === 'copy' &&
-        notice.name === collisionName &&
-        notice.outcome === 'failed',
-    )!;
-    assert.equal(collision.expires_at_ms, null);
+    await button('Refresh videos').click();
+    await sourceRow('collision.mp4').waitForExist();
+    assert.equal(await sourceRow('unrelated.mp4').isExisting(), false);
     assert.equal(
-      readFileSync(collisionTarget, 'utf8'),
-      'keep the destination sentinel',
+      readFileSync(join(fixtureRoot, 'handoff', 'unrelated.mp4'), 'utf8'),
+      'hands off',
     );
-    assert.equal(hash(join(fixtureRoot, 'videos', collisionName)), sourceHash);
     assert.equal(
-      (await listedVideos()).find((video) => video.name === collisionName)
-        ?.identity,
-      collisionSource.identity,
+      hash(join(fixtureRoot, 'handoff', 'renamed-رحلة.mp4')),
+      expected.get('رحلة.mp4'),
     );
-    const collisionCard = await $(
-      `article[data-operation-id="${collision.key.operation_id}"]`,
-    );
-    assert.equal((await collisionCard.getText()).includes(collisionName), true);
-    await collisionCard.$('button').click();
-    await waitFor(
-      async () =>
-        !(await fileResults()).notices.some(
-          (notice) => notice.key.operation_id === collision.key.operation_id,
-        ),
-    );
-    await $('.file-results-panel summary').click();
-    await waitFor(async () => !(await collisionCard.isExisting()));
   });
-  it('persists Arabic, destination and optional success sound across application restart', async () => {
+  it('persists Arabic and unrelated preferences while migrating obsolete destination across application restart', async () => {
     await restartFixture(false);
     await shortcut('s');
     await $('#language').waitForExist();
@@ -693,7 +518,7 @@ describe('TakeDock release desktop acceptance', () => {
     assert.equal(saved.success_sound, true);
     assert.equal(saved.ready_sound, false);
     assert.equal(saved.ready_delay_ms, 1250);
-    assert.equal(saved.destination, join(fixtureRoot, 'destination'));
+    assert.equal(Object.hasOwn(saved, 'destination'), false);
     await browser.reloadSession();
     await $('h1').waitForExist();
     await shortcut('s');
@@ -702,7 +527,7 @@ describe('TakeDock release desktop acceptance', () => {
     assert.equal(await $('#success-sound').isSelected(), true);
     assert.equal(await $('#ready-sound').isSelected(), false);
     assert.equal(await $('#ready-delay').getValue(), '1250');
-    assert.equal(await $('#destination').getValue(), saved.destination);
+    assert.equal(await $('#destination').isExisting(), false);
     assert.equal(await $('html').getAttribute('dir'), 'rtl');
     assert.equal(await button('تثبيت التحديث').isExisting(), false);
     assert.equal(

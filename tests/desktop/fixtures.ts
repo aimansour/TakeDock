@@ -52,7 +52,8 @@ export function prepareFixture(connected = false, flags: string[] = []) {
   fixtureRoot = join(base, randomUUID());
   mkdirSync(fixtureRoot, { recursive: true });
   mkdirSync(join(fixtureRoot, 'videos'));
-  mkdirSync(join(fixtureRoot, 'destination'));
+  mkdirSync(join(fixtureRoot, 'handoff'));
+  writeFileSync(join(fixtureRoot, 'handoff', 'unrelated.mp4'), 'hands off');
   copyFileSync(process.env.TAKEDOCK_FIXTURE_EXE!, join(fixtureRoot, 'adb.exe'));
   flag('record-take-files');
   for (const name of flags) flag(name);
@@ -72,7 +73,7 @@ export function prepareFixture(connected = false, flags: string[] = []) {
     settingsPath,
     JSON.stringify({
       language: 'en',
-      destination: join(fixtureRoot, 'destination'),
+      destination: { obsolete: 'ignored legacy field' },
       adb_path: join(fixtureRoot, 'adb.exe'),
       success_sound: false,
       verification_ms: 120000,
