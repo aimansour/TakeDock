@@ -240,6 +240,25 @@ impl FileResults {
         }
         let outcome = match job.status.as_str() {
             "completed" => FileOutcome::Completed,
+            "failed"
+                if job
+                    .results
+                    .iter()
+                    .any(|result| result.status == "outcome_unknown") =>
+            {
+                FileOutcome::OutcomeUnknown
+            }
+            "failed"
+                if job.results.iter().any(|result| result.status == "retained")
+                    && job.results.iter().all(|result| {
+                        matches!(
+                            result.status.as_str(),
+                            "completed" | "retained" | "cancelled"
+                        )
+                    }) =>
+            {
+                FileOutcome::Retained
+            }
             "failed" => FileOutcome::Failed,
             "cancelled" => FileOutcome::Cancelled,
             _ => return false,

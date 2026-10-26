@@ -157,10 +157,19 @@ fn start_file_job(
     state: State<'_, Arc<Runtime>>,
 ) -> Result<String, String> {
     let lease = state.engine()?.lease_for(generation)?;
-    let destination = PathBuf::from(&state.settings.lock().unwrap().destination);
+    let weak = Arc::downgrade(state.inner());
+    let on_handoff = (kind == JobKind::Mark).then(|| {
+        Arc::new(move |update: &crate::files::HandoffUpdate| {
+            if let Some(runtime) = weak.upgrade()
+                && let Ok(engine) = runtime.engine()
+            {
+                engine.retire_handed_off(update);
+            }
+        }) as crate::files::HandoffCommit
+    });
     state
         .files
-        .start_job(lease, kind, videos, destination, new_stem)
+        .start_job(lease, kind, videos, new_stem, on_handoff)
 }
 #[tauri::command]
 fn cancel_file_job(id: String, state: State<'_, Arc<Runtime>>) -> Result<(), String> {
@@ -168,18 +177,16 @@ fn cancel_file_job(id: String, state: State<'_, Arc<Runtime>>) -> Result<(), Str
 }
 #[tauri::command]
 async fn save_settings(
-    mut settings: Settings,
+    settings: Settings,
     app: tauri::AppHandle,
     state: State<'_, Arc<Runtime>>,
 ) -> Result<Settings, String> {
     let runtime = state.inner().clone();
-    let videos = app.path().video_dir().map_err(|error| error.to_string())?;
     tauri::async_runtime::spawn_blocking(move || {
         let _reconnect = runtime.reconnect.lock().unwrap();
         if runtime.stopped.load(Ordering::Acquire) {
             return Err("disconnected".into());
         }
-        settings::ensure_destination(&mut settings, &videos)?;
         let mut current = runtime.settings.lock().unwrap();
         settings::save(&runtime.settings_path, &settings)?;
         *current = settings.clone();
@@ -349,19 +356,12 @@ pub fn run() {
             let config = app.path().app_config_dir()?.join("settings.json");
             let mut errors = vec![];
             let mut persist_defaults = true;
-            let mut saved = settings::load(&config).unwrap_or_else(|_| {
+            let saved = settings::load(&config).unwrap_or_else(|_| {
                 persist_defaults = false;
                 errors.push("settings_load_failed".into());
                 Settings::default()
             });
-            let destination = app
-                .path()
-                .video_dir()
-                .map_err(|error| error.to_string())
-                .and_then(|videos| settings::ensure_destination(&mut saved, &videos));
-            if destination.is_err() {
-                errors.push("destination_setup_failed".into());
-            } else if persist_defaults && settings::save(&config, &saved).is_err() {
+            if persist_defaults && settings::save(&config, &saved).is_err() {
                 errors.push("settings_save_failed".into());
             }
             let mut windows = Windows::default();

@@ -1,8 +1,30 @@
 use crate::{
-    files::{Video, hash_path, quote},
+    files::{Video, quote},
     session::DeviceLease,
 };
-use std::path::PathBuf;
+use sha2::{Digest, Sha256};
+use std::{
+    io::Read,
+    path::{Path, PathBuf},
+};
+
+fn hash_path(path: &Path) -> Result<String, String> {
+    let mut file = std::fs::File::open(path).map_err(|e| e.to_string())?;
+    let mut hash = Sha256::new();
+    let mut buffer = [0; 256 * 1024];
+    loop {
+        let count = file.read(&mut buffer).map_err(|e| e.to_string())?;
+        if count == 0 {
+            break;
+        }
+        hash.update(&buffer[..count]);
+    }
+    Ok(hash
+        .finalize()
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect())
+}
 use takedock_files::Identity;
 
 pub(crate) struct HelperClient {

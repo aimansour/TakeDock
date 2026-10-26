@@ -10,17 +10,8 @@ pub(crate) enum Stage {
     Worker,
     Prepare,
     InitialStat,
-    Stream,
-    Sync,
-    StoredSize,
-    PostTransferStat,
-    Verify,
-    RemoteHash,
-    LocalHash,
-    Publish,
-    MoveStat,
+    Handoff,
     Delete,
-    Index,
     Terminal,
 }
 #[derive(Clone, Copy, serde::Serialize)]
@@ -346,14 +337,17 @@ mod tests {
             let (trace, writer) = Trace::with_writer(output.clone(), clock(), 1000, "test");
             let key = TraceKey::new("job", 7, Some(0));
             let operation = || -> Result<(), &str> {
-                let _span = trace.span(&key, Stage::Sync);
-                Err("sync failed")
+                let _span = trace.span(&key, Stage::Handoff);
+                Err("handoff failed")
             };
             assert!(operation().is_err());
             trace.complete_job(&key);
             finished(trace, writer);
             let rows = output.rows();
-            let edges: Vec<_> = rows.iter().filter(|row| row["stage"] == "sync").collect();
+            let edges: Vec<_> = rows
+                .iter()
+                .filter(|row| row["stage"] == "handoff")
+                .collect();
             assert_eq!(edges.len(), 2);
             assert_eq!(edges[0]["edge"], "begin");
             assert_eq!(edges[1]["edge"], "end");
@@ -459,8 +453,8 @@ mod tests {
             let output = Capture::default();
             let (trace, writer) = Trace::with_writer(output.clone(), clock(), 1000, "test");
             let key = TraceKey::new("job-123", 7, Some(0));
-            trace.mark(&key, Stage::LocalHash, Edge::Begin);
-            trace.mark(&key, Stage::LocalHash, Edge::End);
+            trace.mark(&key, Stage::Handoff, Edge::Begin);
+            trace.mark(&key, Stage::Handoff, Edge::End);
             trace.complete_job(&key);
             finished(trace, writer);
             let rows = output.rows();

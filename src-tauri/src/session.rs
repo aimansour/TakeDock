@@ -625,6 +625,26 @@ impl Engine {
             .unwrap()
             .set_readiness_policy(policy);
     }
+    pub fn retire_handed_off(&self, update: &crate::files::HandoffUpdate) {
+        if !self.shared.current(update.generation) {
+            return;
+        }
+        let Ok(expected) =
+            serde_json::from_str::<takedock_files::Identity>(&update.source_identity)
+        else {
+            return;
+        };
+        let mut model = self.shared.model.lock().unwrap();
+        if model.state.generation != update.generation {
+            return;
+        }
+        let changed = model.discard.handed_off(&update.source_name, &expected);
+        model.withdraw_cancelled_discard();
+        drop(model);
+        if changed {
+            self.shared.state();
+        }
+    }
     pub fn invalidate_speech_readiness(&self) {
         let mut model = self.shared.model.lock().unwrap();
         model.invalidate_speech_readiness();

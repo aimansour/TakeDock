@@ -2,15 +2,6 @@ use crate::model::Settings;
 use std::io::Write;
 use std::path::Path;
 
-pub fn ensure_destination(settings: &mut Settings, videos: &Path) -> Result<(), String> {
-    if settings.destination.is_empty() {
-        let directory = videos.join("TakeDock");
-        std::fs::create_dir_all(&directory).map_err(|error| error.to_string())?;
-        settings.destination = directory.to_str().ok_or("destination_encoding")?.into();
-    }
-    Ok(())
-}
-
 fn validate(settings: &Settings) -> Result<(), String> {
     if !["en", "ar"].contains(&settings.language.as_str())
         || !(2000..=120_000).contains(&settings.verification_ms)
@@ -18,9 +9,6 @@ fn validate(settings: &Settings) -> Result<(), String> {
         || !settings.ready_delay_ms.is_multiple_of(50)
     {
         return Err("invalid_settings".into());
-    }
-    if !settings.destination.is_empty() && !Path::new(&settings.destination).is_absolute() {
-        return Err("destination_must_be_absolute".into());
     }
     if !settings.adb_path.is_empty() && !Path::new(&settings.adb_path).is_absolute() {
         return Err("adb_path_must_be_absolute".into());
@@ -59,6 +47,37 @@ pub fn save(path: &Path, settings: &Settings) -> Result<(), String> {
 mod tests {
     use super::*;
     #[test]
+    fn legacy_destination_is_ignored_without_filesystem_access() {
+        let trial = tempfile::tempdir().unwrap();
+        let path = trial.path().join("settings.json");
+        let unused = trial.path().join("must-not-create");
+        let adb = trial.path().join("adb.exe");
+        for obsolete in [
+            serde_json::json!(unused),
+            serde_json::json!("relative/obsolete"),
+            serde_json::json!({"obsolete":true}),
+        ] {
+            std::fs::write(&path, serde_json::to_vec(&serde_json::json!({
+                "language":"ar","destination":obsolete,"adb_path":adb,
+                "success_sound":true,"ready_sound":false,"ready_delay_ms":1250,"verification_ms":15000
+            })).unwrap()).unwrap();
+            let loaded = load(&path).unwrap();
+            assert_eq!(loaded.language, "ar");
+            assert_eq!(loaded.adb_path, adb.to_str().unwrap());
+            assert!(loaded.success_sound);
+            assert!(!loaded.ready_sound);
+            assert_eq!(
+                (loaded.ready_delay_ms, loaded.verification_ms),
+                (1250, 15000)
+            );
+            save(&path, &loaded).unwrap();
+            let saved: serde_json::Value =
+                serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+            assert!(saved.get("destination").is_none());
+            assert!(!unused.exists());
+        }
+    }
+    #[test]
     fn legacy_settings_default_readiness_without_replacing_existing_values() {
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("settings.json");
@@ -79,7 +98,12 @@ mod tests {
         std::fs::write(&path, legacy.to_string()).unwrap();
         let saved = load(&path).unwrap();
         assert_eq!(saved.language, "ar");
-        assert_eq!(saved.destination, destination);
+        assert!(
+            serde_json::to_value(&saved)
+                .unwrap()
+                .get("destination")
+                .is_none()
+        );
         assert_eq!(saved.adb_path, adb_path);
         assert!(saved.success_sound);
         assert_eq!(saved.verification_ms, 15_000);
@@ -136,24 +160,6 @@ mod tests {
     fn new_session_serializes_inactive_speech_readiness() {
         let wire = serde_json::to_value(crate::model::SessionState::default()).unwrap();
         assert_eq!(wire["speech_readiness"], "inactive");
-    }
-    #[test]
-    fn default_destination_is_created_and_custom_directory_is_preserved() {
-        let directory = tempfile::tempdir().unwrap();
-        let videos = directory.path().join("Videos");
-        let mut settings = Settings::default();
-        ensure_destination(&mut settings, &videos).unwrap();
-        assert_eq!(Path::new(&settings.destination), videos.join("TakeDock"));
-        assert!(Path::new(&settings.destination).is_dir());
-        settings.destination = directory
-            .path()
-            .join("User choice")
-            .to_string_lossy()
-            .into();
-        let original = settings.destination.clone();
-        ensure_destination(&mut settings, &videos).unwrap();
-        assert_eq!(settings.destination, original);
-        assert!(!Path::new(&original).exists());
     }
     #[test]
     fn defaults_are_silent_and_survive_restart_after_edit() {

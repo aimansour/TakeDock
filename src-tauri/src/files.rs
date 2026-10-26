@@ -1,18 +1,15 @@
 use crate::session::{DeviceLease, EventSink};
 use crate::transfer_trace::{Edge, Stage, Trace, TraceKey};
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
 use std::{
-    collections::HashMap,
-    io::{Read, Write},
-    path::{Path, PathBuf},
+    collections::{HashMap, HashSet},
+    path::PathBuf,
     sync::{
         Arc, Mutex,
-        atomic::{AtomicBool, AtomicU64, Ordering},
+        atomic::{AtomicBool, Ordering},
         mpsc::{self, SyncSender},
     },
     thread,
-    time::{Duration, Instant},
 };
 use takedock_files::{Entry, Identity};
 
@@ -132,8 +129,7 @@ fn err(error: impl std::fmt::Display) -> String {
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum JobKind {
-    Copy,
-    Move,
+    Mark,
     Delete,
     Rename,
 }
@@ -147,8 +143,6 @@ pub struct JobEvent {
     pub status: String,
     pub phase: String,
     pub name: String,
-    pub bytes: u64,
-    pub total: u64,
     pub completed: usize,
     pub count: usize,
     pub message: String,
@@ -171,14 +165,50 @@ pub struct RenameUpdate {
     pub source_identity: String,
     pub video: Video,
 }
+#[derive(Clone, Debug, Serialize)]
+pub struct HandoffUpdate {
+    pub generation: u64,
+    pub job_id: String,
+    pub operation_id: String,
+    pub sequence: u64,
+    pub source_name: String,
+    pub source_identity: String,
+}
+pub type HandoffCommit = Arc<dyn Fn(&HandoffUpdate) + Send + Sync>;
 struct Job {
     event: JobEvent,
     lease: DeviceLease,
     videos: Vec<Video>,
-    destination: PathBuf,
     new_stem: Option<String>,
     cancel: Arc<AtomicBool>,
     trace: Trace,
+    on_handoff: Option<HandoffCommit>,
+}
+#[derive(Default)]
+struct Reservations {
+    owners: HashMap<(u64, u64, u64), String>,
+}
+impl Reservations {
+    fn reserve(&mut self, generation: u64, job: &str, videos: &[Video]) -> Result<(), String> {
+        let mut keys = HashSet::new();
+        for video in videos {
+            let identity: Identity = serde_json::from_str(&video.identity).map_err(err)?;
+            let key = (generation, identity.device, identity.inode);
+            if !keys.insert(key) {
+                return Err("duplicate_selection".into());
+            }
+            if self.owners.contains_key(&key) {
+                return Err("file_busy".into());
+            }
+        }
+        for key in keys {
+            self.owners.insert(key, job.into());
+        }
+        Ok(())
+    }
+    fn release(&mut self, job: &str) {
+        self.owners.retain(|_, owner| owner != job);
+    }
 }
 enum Message {
     List(DeviceLease, mpsc::Sender<Result<Vec<Video>, String>>),
@@ -189,7 +219,9 @@ enum Message {
 pub struct FileService {
     sender: SyncSender<Message>,
     jobs: Arc<Mutex<HashMap<String, Arc<AtomicBool>>>>,
+    reserved: Arc<Mutex<Reservations>>,
     worker: Mutex<Option<thread::JoinHandle<()>>>,
+    index: Arc<crate::file_index::IndexService>,
     sink: EventSink,
     trace: Trace,
 }
@@ -220,11 +252,7 @@ impl FileService {
         authorize: Arc<dyn Fn() -> bool + Send + Sync>,
         complete: Arc<dyn Fn(crate::discard::DeleteOutcome) + Send + Sync>,
     ) -> Result<String, String> {
-        takedock_files::validate_name(&video.name)?;
-        let identity: Identity = serde_json::from_str(&video.identity).map_err(err)?;
-        if !video.ready || identity.size != video.size {
-            return Err("video_not_finalized".into());
-        }
+        validate_video(&video)?;
         if operation_id.is_empty()
             || operation_id.len() > 128
             || lease.cancelled.load(Ordering::Acquire)
@@ -232,6 +260,11 @@ impl FileService {
             return Err("discard_cancelled".into());
         }
         let id = uuid::Uuid::new_v4().to_string();
+        self.reserved.lock().unwrap().reserve(
+            lease.generation,
+            &id,
+            std::slice::from_ref(&video),
+        )?;
         let cancel = Arc::new(AtomicBool::new(false));
         let event = JobEvent {
             discard_operation_id: Some(operation_id.clone()),
@@ -241,8 +274,6 @@ impl FileService {
             status: "queued".into(),
             phase: "preparing".into(),
             name: video.name.clone(),
-            bytes: 0,
-            total: video.size,
             completed: 0,
             count: 1,
             message: String::new(),
@@ -265,15 +296,20 @@ impl FileService {
             .is_err()
         {
             self.jobs.lock().unwrap().remove(&id);
+            self.reserved.lock().unwrap().release(&id);
             return Err("file_queue_full".into());
         }
         emit(&self.sink, &event);
         Ok(id)
     }
     pub fn start(resources: PathBuf, sink: EventSink) -> Self {
-        let (sender, receiver) = mpsc::sync_channel(16);
+        let (sender, receiver) = mpsc::sync_channel::<Message>(16);
         let jobs = Arc::new(Mutex::new(HashMap::new()));
         let active = jobs.clone();
+        let reserved = Arc::new(Mutex::new(Reservations::default()));
+        let worker_reserved = reserved.clone();
+        let index = Arc::new(crate::file_index::IndexService::start(sink.clone()));
+        let indexing = index.clone();
         let worker_sink = sink.clone();
         let worker = thread::spawn(move || {
             let sink = worker_sink;
@@ -285,6 +321,7 @@ impl FileService {
                         let id = job.event.id.clone();
                         crate::guarded_delete::run(&mut remote, *job, &sink);
                         active.lock().unwrap().remove(&id);
+                        worker_reserved.lock().unwrap().release(&id);
                     }
                     Message::List(lease, reply) => {
                         let result = remote
@@ -294,37 +331,59 @@ impl FileService {
                         let _ = reply.send(result);
                     }
                     Message::Job(mut job) => {
-                        sequence += 1;
                         let key = TraceKey::new(&job.event.id, job.lease.generation, None);
                         job.trace.mark(&key, Stage::Worker, Edge::Mark);
                         job.event.status = "running".into();
                         emit(&sink, &job.event);
-                        let result = job
-                            .trace
-                            .measure(&key, Stage::Prepare, || remote.prepare(&job.lease))
-                            .and_then(|_| execute(&remote, &mut job, &sink, sequence));
-                        job.event.status = if result.is_ok() {
-                            "completed"
-                        } else if job.cancel.load(Ordering::Acquire) {
-                            "cancelled"
-                        } else {
-                            "failed"
-                        }
-                        .into();
-                        job.event.message = result.err().unwrap_or_default();
-                        for video in job.videos.iter().skip(job.event.results.len()) {
-                            job.event.results.push(FileResult {
-                                name: video.name.clone(),
-                                status: "skipped".into(),
-                                message: job.event.message.clone(),
-                                requested_name: None,
-                                destination_name: None,
+                        let result = check(&job)
+                            .and_then(|_| {
+                                job.trace
+                                    .measure(&key, Stage::Prepare, || remote.prepare(&job.lease))
+                            })
+                            .and_then(|_| {
+                                execute(&remote, &mut job, &sink, &mut sequence, &indexing)
                             });
+                        if let Err(error) = result {
+                            for video in job.videos.iter().skip(job.event.results.len()) {
+                                job.event.results.push(FileResult {
+                                    name: video.name.clone(),
+                                    status: if error == "operation_cancelled"
+                                        || error == "session_replaced"
+                                    {
+                                        "cancelled"
+                                    } else {
+                                        "failed"
+                                    }
+                                    .into(),
+                                    message: error.clone(),
+                                    requested_name: None,
+                                    destination_name: None,
+                                });
+                            }
                         }
+                        job.event.status =
+                            settled_status(&job.event.results, job.cancel.load(Ordering::Acquire))
+                                .into();
+                        job.event.message = if job
+                            .event
+                            .results
+                            .iter()
+                            .any(|r| r.status == "outcome_unknown")
+                        {
+                            "handoff_outcome_unknown".into()
+                        } else {
+                            job.event
+                                .results
+                                .iter()
+                                .find(|r| r.status != "completed")
+                                .map(|r| r.message.clone())
+                                .unwrap_or_default()
+                        };
                         job.trace.mark(&key, Stage::Terminal, Edge::Mark);
+                        active.lock().unwrap().remove(&job.event.id);
+                        worker_reserved.lock().unwrap().release(&job.event.id);
                         emit(&sink, &job.event);
                         job.trace.complete_job(&key);
-                        active.lock().unwrap().remove(&job.event.id);
                     }
                     Message::Stop => break,
                 }
@@ -333,7 +392,9 @@ impl FileService {
         Self {
             sender,
             jobs,
+            reserved,
             worker: Mutex::new(Some(worker)),
+            index,
             sink,
             trace: Trace::from_env(),
         }
@@ -350,8 +411,8 @@ impl FileService {
         lease: DeviceLease,
         kind: JobKind,
         videos: Vec<Video>,
-        destination: PathBuf,
         new_stem: Option<String>,
+        on_handoff: Option<HandoffCommit>,
     ) -> Result<String, String> {
         let accepted_at = self.trace.stamp();
         if videos.is_empty() || videos.len() > 10_000 {
@@ -360,32 +421,24 @@ impl FileService {
         if kind == JobKind::Rename && (videos.len() != 1 || new_stem.is_none()) {
             return Err("rename_requires_one_video".into());
         }
-        let mut names = std::collections::HashSet::new();
+        let mut names = HashSet::new();
         for video in &videos {
-            takedock_files::validate_name(&video.name)?;
-            let identity: Identity = serde_json::from_str(&video.identity).map_err(err)?;
-            if identity.size != video.size || !video.ready {
-                return Err("video_not_finalized".into());
-            }
+            validate_video(video)?;
             if !names.insert(&video.name) {
                 return Err("duplicate_selection".into());
-            }
-            if matches!(kind, JobKind::Copy | JobKind::Move) {
-                windows_name(&video.name)?;
             }
         }
         if kind == JobKind::Rename {
             renamed(&videos[0].name, new_stem.as_deref().unwrap())?;
         }
-        if matches!(kind, JobKind::Copy | JobKind::Move)
-            && (!destination.is_absolute() || !destination.is_dir())
-        {
-            return Err("destination_required".into());
-        }
         if lease.cancelled.load(Ordering::Acquire) {
             return Err("session_replaced".into());
         }
         let id = uuid::Uuid::new_v4().to_string();
+        self.reserved
+            .lock()
+            .unwrap()
+            .reserve(lease.generation, &id, &videos)?;
         let key = TraceKey::new(&id, lease.generation, None);
         self.trace
             .record_at(&key, Stage::Accepted, Edge::Mark, accepted_at);
@@ -398,11 +451,6 @@ impl FileService {
             status: "queued".into(),
             phase: "preparing".into(),
             name: String::new(),
-            bytes: 0,
-            total: videos
-                .iter()
-                .try_fold(0u64, |sum, v| sum.checked_add(v.size))
-                .ok_or("selection_too_large")?,
             completed: 0,
             count: videos.len(),
             message: String::new(),
@@ -417,14 +465,15 @@ impl FileService {
                 event,
                 lease,
                 videos,
-                destination,
                 new_stem,
                 cancel,
                 trace: self.trace.clone(),
+                on_handoff,
             })))
             .is_err()
         {
             self.jobs.lock().unwrap().remove(&id);
+            self.reserved.lock().unwrap().release(&id);
             return Err("file_queue_full".into());
         }
         self.trace
@@ -443,29 +492,35 @@ impl FileService {
     }
     pub fn shutdown(&self) {
         for flag in self.jobs.lock().unwrap().values() {
-            flag.store(true, Ordering::Release)
+            flag.store(true, Ordering::Release);
         }
-        let mut worker = self.worker.lock().unwrap();
-        if let Some(handle) = worker.take() {
+        if let Some(handle) = self.worker.lock().unwrap().take() {
             let _ = self.sender.send(Message::Stop);
             let _ = handle.join();
         }
+        self.index.shutdown();
     }
 }
 impl Drop for FileService {
     fn drop(&mut self) {
-        self.shutdown()
+        self.shutdown();
     }
 }
+fn validate_video(video: &Video) -> Result<(), String> {
+    takedock_files::validate_name(&video.name)?;
+    let identity: Identity = serde_json::from_str(&video.identity).map_err(err)?;
+    if identity.size != video.size || !video.ready {
+        return Err("video_not_finalized".into());
+    }
+    Ok(())
+}
 fn emit(sink: &EventSink, event: &JobEvent) {
-    sink("file-job", serde_json::to_value(event).unwrap())
+    sink("file-job", serde_json::to_value(event).unwrap());
 }
 type Remote = crate::helper::HelperClient;
 impl Remote {
     fn job_output(&self, job: &Job, args: &[&str], timeout: u64) -> Result<Vec<u8>, String> {
         check(job)?;
-        // Mutation acknowledgement requires shell-v2's remote exit status.
-        // Legacy exec-out can exit 0 even when the helper rejected the operation.
         job.lease.adb.output_with_cancellation(
             &job.lease.serial,
             &["shell", "-T", &self.command(args)?],
@@ -483,339 +538,246 @@ fn check(job: &Job) -> Result<(), String> {
         Ok(())
     }
 }
-pub(crate) fn hash_path(path: &Path) -> Result<String, String> {
-    let mut file = std::fs::File::open(path).map_err(err)?;
-    let mut hash = Sha256::new();
-    let mut buffer = [0; 256 * 1024];
-    loop {
-        let count = file.read(&mut buffer).map_err(err)?;
-        if count == 0 {
-            break;
-        }
-        hash.update(&buffer[..count]);
-    }
-    Ok(hash
-        .finalize()
+fn settled_status(results: &[FileResult], cancelled: bool) -> &'static str {
+    if !results.is_empty() && results.iter().all(|r| r.status == "completed") {
+        "completed"
+    } else if results
         .iter()
-        .map(|byte| format!("{byte:02x}"))
-        .collect())
+        .any(|r| matches!(r.status.as_str(), "failed" | "retained" | "outcome_unknown"))
+    {
+        "failed"
+    } else if cancelled || results.iter().any(|r| r.status == "cancelled") {
+        "cancelled"
+    } else {
+        "failed"
+    }
 }
-fn execute(remote: &Remote, job: &mut Job, sink: &EventSink, sequence: u64) -> Result<(), String> {
-    let mut failure = None;
+fn execute(
+    remote: &Remote,
+    job: &mut Job,
+    sink: &EventSink,
+    sequence: &mut u64,
+    index: &crate::file_index::IndexService,
+) -> Result<(), String> {
+    use takedock_files::VIDEO_ROOT;
+    use takedock_files::handoff::{HANDOFF_ROOT, Outcome};
     for (file_index, video) in job.videos.clone().into_iter().enumerate() {
+        check(job)?;
         let key = TraceKey::new(&job.event.id, job.lease.generation, Some(file_index));
-        if check(job).is_err() {
-            job.event.results.push(FileResult {
-                name: video.name.clone(),
-                status: "cancelled".into(),
-                message: "operation_cancelled".into(),
-                requested_name: None,
-                destination_name: None,
-            });
-            return Err("operation_cancelled".into());
+        job.event.name = video.name.clone();
+        job.event.phase = match job.event.kind {
+            JobKind::Mark => "marking",
+            JobKind::Delete => "deleting",
+            JobKind::Rename => "renaming",
         }
-        let requested_name = if job.event.kind == JobKind::Rename {
+        .into();
+        emit(sink, &job.event);
+        let requested = if job.event.kind == JobKind::Rename {
             Some(renamed(&video.name, job.new_stem.as_deref().unwrap())?)
         } else {
             None
         };
-        let mut destination_name = None;
-        let result = (|| -> Result<(), String> {
-            check(job)?;
-            job.event.name = video.name.clone();
-            job.event.bytes = 0;
-            job.event.total = video.size;
-            job.event.phase = match job.event.kind {
-                JobKind::Copy | JobKind::Move => "copying",
-                JobKind::Delete => "deleting",
-                JobKind::Rename => "renaming",
-            }
-            .into();
-            emit(sink, &job.event);
-            job.trace
-                .measure(&key, Stage::InitialStat, || remote.stat(&job.lease, &video))?;
+        let mut result = FileResult {
+            name: video.name.clone(),
+            status: "failed".into(),
+            message: String::new(),
+            requested_name: requested.clone(),
+            destination_name: None,
+        };
+        let initial = job
+            .trace
+            .measure(&key, Stage::InitialStat, || remote.stat(&job.lease, &video));
+        if let Err(error) = initial {
+            result.message = error;
+        } else {
             match job.event.kind {
-                JobKind::Copy | JobKind::Move => {
-                    let destination = job.destination.join(&video.name);
-                    if destination.exists() {
-                        return Err("destination_exists".into());
-                    }
-                    let partial = tempfile::Builder::new()
-                        .prefix(".takedock-")
-                        .suffix(".partial")
-                        .tempfile_in(&job.destination)
-                        .map_err(err)?;
-                    job.trace.measure(&key, Stage::Stream, || {
-                        stream(
+                JobKind::Mark => {
+                    let operation_id = uuid::Uuid::new_v4().to_string();
+                    let outcome = job.trace.measure(&key, Stage::Handoff, || {
+                        crate::handoff::perform(
                             remote,
-                            job,
+                            &job.lease,
                             &video,
-                            partial.as_file().try_clone().map_err(err)?,
-                            sink,
+                            &operation_id,
+                            &job.cancel,
                         )
-                    })?;
-                    check(job)?;
-                    job.event.bytes = video.size;
-                    job.event.phase = "verifying".into();
-                    emit(sink, &job.event);
-                    job.trace
-                        .measure(&key, Stage::Sync, || partial.as_file().sync_all())
-                        .map_err(err)?;
-                    let stored_size = job
-                        .trace
-                        .measure(&key, Stage::StoredSize, || partial.as_file().metadata())
-                        .map_err(err)?
-                        .len();
-                    if stored_size != video.size {
-                        return Err("copy_size_mismatch".into());
-                    }
-                    job.trace.measure(&key, Stage::PostTransferStat, || {
-                        remote.stat(&job.lease, &video)
-                    })?;
-                    let verification_span = job.trace.span(&key, Stage::Verify);
-                    let expected =
-                        String::from_utf8(job.trace.measure(&key, Stage::RemoteHash, || {
-                            remote.job_output(job, &["hash", &video.name, &video.identity], 600_000)
-                        })?)
-                        .map_err(err)?;
-                    if expected.trim()
-                        != job
-                            .trace
-                            .measure(&key, Stage::LocalHash, || hash_path(partial.path()))?
-                    {
-                        return Err("copy_hash_mismatch".into());
-                    }
-                    drop(verification_span);
-                    check(job)?;
-                    job.trace
-                        .measure(&key, Stage::Publish, || {
-                            partial.persist_noclobber(&destination)
-                        })
-                        .map_err(err)?;
-                    if job.event.kind == JobKind::Move {
-                        job.event.phase = "deleting".into();
-                        emit(sink, &job.event);
-                        check(job)?;
-                        job.trace
-                            .measure(&key, Stage::MoveStat, || remote.stat(&job.lease, &video))?;
-                        job.trace.measure(&key, Stage::Delete, || {
-                            remote.job_output(
-                                job,
-                                &["delete", &video.name, &video.identity],
-                                30_000,
-                            )
-                        })?;
+                    });
+                    match outcome {
+                        Outcome::HandedOff { receipt, warning } => {
+                            result.status = "completed".into();
+                            result.destination_name = Some(receipt.destination_name);
+                            *sequence = sequence.saturating_add(1);
+                            let update = HandoffUpdate {
+                                generation: job.lease.generation,
+                                job_id: job.event.id.clone(),
+                                operation_id,
+                                sequence: *sequence,
+                                source_name: video.name.clone(),
+                                source_identity: video.identity.clone(),
+                            };
+                            if let Some(callback) = &job.on_handoff {
+                                callback(&update);
+                            }
+                            sink("file-handed-off", serde_json::to_value(update).unwrap());
+                            if let Some(code) = warning {
+                                sink(
+                                    "file-metadata-warning",
+                                    serde_json::json!({"generation":job.lease.generation,"id":job.event.id,"code":code}),
+                                );
+                            }
+                            index.enqueue(
+                                job.lease.clone(),
+                                job.event.id.clone(),
+                                vec![
+                                    (VIDEO_ROOT, video.name.clone()),
+                                    (HANDOFF_ROOT, video.name.clone()),
+                                ],
+                            );
+                        }
+                        Outcome::Retained { code } => {
+                            result.status = if code == "operation_cancelled" {
+                                "cancelled"
+                            } else {
+                                "retained"
+                            }
+                            .into();
+                            result.message = code;
+                        }
+                        Outcome::OutcomeUnknown { code } => {
+                            result.status = "outcome_unknown".into();
+                            result.message = code;
+                        }
                     }
                 }
                 JobKind::Delete => {
-                    check(job)?;
-                    remote.job_output(job, &["delete", &video.name, &video.identity], 30_000)?;
+                    match job.trace.measure(&key, Stage::Delete, || {
+                        remote.job_output(job, &["delete", &video.name, &video.identity], 30_000)
+                    }) {
+                        Ok(_) => {
+                            result.status = "completed".into();
+                            index.enqueue(
+                                job.lease.clone(),
+                                job.event.id.clone(),
+                                vec![(VIDEO_ROOT, video.name.clone())],
+                            );
+                        }
+                        Err(error) => result.message = error,
+                    }
                 }
                 JobKind::Rename => {
-                    let new_name = requested_name.as_deref().unwrap();
-                    check(job)?;
-                    remote.job_output(
+                    let new_name = requested.as_deref().unwrap();
+                    match remote.job_output(
                         job,
                         &["rename", &video.name, new_name, &video.identity],
                         30_000,
-                    )?;
-                    destination_name = Some(new_name.to_owned());
-                    let confirmed = remote
-                        .output(&job.lease, &["inspect", new_name], 5_000)
-                        .and_then(|bytes| serde_json::from_slice::<Entry>(&bytes).map_err(err))
-                        .and_then(|entry| confirmed_rename_video(&video, new_name, entry));
-                    match confirmed {
-                        Ok(renamed_video) => (sink)(
-                            "file-renamed",
-                            serde_json::to_value(RenameUpdate {
-                                generation: job.lease.generation,
-                                id: job.event.id.clone(),
-                                sequence,
-                                source_name: video.name.clone(),
-                                source_identity: video.identity.clone(),
-                                video: renamed_video,
-                            })
-                            .expect("rename update serialization"),
-                        ),
-                        Err(_) => (sink)(
-                            "file-metadata-warning",
-                            serde_json::json!({
-                                "generation":job.lease.generation,"id":job.event.id,"code":"rename_refresh_pending"
-                            }),
-                        ),
-                    }
-                }
-            }
-            if job.event.kind != JobKind::Copy {
-                let _index_span = job.trace.span(&key, Stage::Index);
-                let mut names = vec![video.name.clone()];
-                if job.event.kind == JobKind::Rename {
-                    names.push(renamed(&video.name, job.new_stem.as_deref().unwrap())?);
-                }
-                for name in names {
-                    let encoded = name
-                        .as_bytes()
-                        .iter()
-                        .map(|b| {
-                            if b.is_ascii_alphanumeric() || b"-._~".contains(b) {
-                                (*b as char).to_string()
-                            } else {
-                                format!("%{b:02X}")
+                    ) {
+                        Err(error) => result.message = error,
+                        Ok(_) => {
+                            result.status = "completed".into();
+                            result.destination_name = Some(new_name.into());
+                            let confirmed = remote
+                                .output(&job.lease, &["inspect", new_name], 5000)
+                                .and_then(|bytes| {
+                                    serde_json::from_slice::<Entry>(&bytes).map_err(err)
+                                })
+                                .and_then(|entry| confirmed_rename_video(&video, new_name, entry));
+                            match confirmed {
+                                Ok(video_update) => {
+                                    *sequence = sequence.saturating_add(1);
+                                    sink(
+                                        "file-renamed",
+                                        serde_json::to_value(RenameUpdate {
+                                            generation: job.lease.generation,
+                                            id: job.event.id.clone(),
+                                            sequence: *sequence,
+                                            source_name: video.name.clone(),
+                                            source_identity: video.identity.clone(),
+                                            video: video_update,
+                                        })
+                                        .unwrap(),
+                                    );
+                                }
+                                Err(_) => sink(
+                                    "file-metadata-warning",
+                                    serde_json::json!({"generation":job.lease.generation,"id":job.event.id,"code":"rename_refresh_pending"}),
+                                ),
                             }
-                        })
-                        .collect::<String>();
-                    let uri = format!("file:///sdcard/DCIM/OpenCamera/{encoded}");
-                    if job
-                        .lease
-                        .output(
-                            &[
-                                "shell",
-                                "am",
-                                "broadcast",
-                                "-a",
-                                "android.intent.action.MEDIA_SCANNER_SCAN_FILE",
-                                "-d",
-                                &uri,
-                            ],
-                            5000,
-                        )
-                        .is_err()
-                    {
-                        (sink)(
-                            "file-index-warning",
-                            serde_json::json!({"generation":job.lease.generation,"id":job.event.id,"code":"media_index_pending"}),
-                        );
+                            index.enqueue(
+                                job.lease.clone(),
+                                job.event.id.clone(),
+                                vec![
+                                    (VIDEO_ROOT, video.name.clone()),
+                                    (VIDEO_ROOT, new_name.into()),
+                                ],
+                            );
+                        }
                     }
                 }
             }
-            Ok(())
-        })();
-        let status = if result.is_ok() {
-            job.event.completed += 1;
-            "completed"
-        } else if job.cancel.load(Ordering::Acquire) {
-            "cancelled"
-        } else {
-            "failed"
-        };
-        let message = result.err().unwrap_or_default();
-        if !message.is_empty() {
-            failure = Some(message.clone());
         }
-        job.event.results.push(FileResult {
-            name: video.name.clone(),
-            status: status.into(),
-            message,
-            requested_name,
-            destination_name,
-        });
+        if result.status == "completed" {
+            job.event.completed += 1;
+        }
+        job.event.results.push(result);
         emit(sink, &job.event);
     }
-    match failure {
-        Some(message) => Err(message),
-        None => Ok(()),
-    }
+    Ok(())
 }
-fn stream(
-    remote: &Remote,
-    job: &Job,
-    video: &Video,
-    mut file: std::fs::File,
-    sink: &EventSink,
-) -> Result<(), String> {
-    let command = remote.command(&["read", &video.name, &video.identity])?;
-    let mut child = job
-        .lease
-        .adb
-        .spawn(Some(&job.lease.serial), &["exec-out", &command], false)?;
-    let mut stdout = child.stdout.take().unwrap();
-    let stderr = child.stderr.take().unwrap();
-    let errors = thread::spawn(move || {
-        let mut bytes = Vec::new();
-        let _ = stderr.take(64 * 1024).read_to_end(&mut bytes);
-        bytes
-    });
-    let progress = Arc::new(AtomicU64::new(0));
-    let written = progress.clone();
-    let maximum = video.size;
-    let read_failed = Arc::new(AtomicBool::new(false));
-    let failure_flag = read_failed.clone();
-    let mut event = job.event.clone();
-    let sink = sink.clone();
-    let output = thread::spawn(move || {
-        let result = (|| -> Result<(), String> {
-            let mut buffer = [0; 256 * 1024];
-            let mut last = Instant::now();
-            let mut count = 0u64;
-            loop {
-                let read = stdout.read(&mut buffer).map_err(err)?;
-                if read == 0 {
-                    break;
-                }
-                count = count.checked_add(read as u64).ok_or("copy_size_mismatch")?;
-                if count > maximum {
-                    return Err("copy_size_mismatch".into());
-                }
-                file.write_all(&buffer[..read]).map_err(err)?;
-                written.store(count, Ordering::Release);
-                if last.elapsed() > Duration::from_millis(100) {
-                    event.bytes = count;
-                    emit(&sink, &event);
-                    last = Instant::now();
-                }
-            }
-            if count != maximum {
-                return Err("copy_size_mismatch".into());
-            }
-            Ok(())
-        })();
-        failure_flag.store(result.is_err(), Ordering::Release);
-        result
-    });
-    let mut last = Instant::now();
-    let mut previous = 0;
-    let mut failure = None;
-    let status = loop {
-        if let Err(error) = check(job) {
-            failure = Some(error);
-            let _ = child.kill();
-            break child.wait().map_err(err)?;
-        }
-        let current = progress.load(Ordering::Acquire);
-        if current != previous {
-            last = Instant::now();
-            previous = current;
-        }
-        if last.elapsed() > Duration::from_secs(180) || read_failed.load(Ordering::Acquire) {
-            failure = Some("transfer_interrupted".into());
-            let _ = child.kill();
-            break child.wait().map_err(err)?;
-        }
-        if let Some(status) = child.try_wait().map_err(err)? {
-            break status;
-        }
-        thread::sleep(Duration::from_millis(10));
-    };
-    let result = output.join().map_err(|_| "copy_worker_panicked")?;
-    let detail = String::from_utf8_lossy(&errors.join().map_err(|_| "copy_error_worker_panicked")?)
-        .trim()
-        .to_owned();
-    if let Some(error) = failure {
-        return Err(error);
-    }
-    if !status.success() {
-        return Err(if detail.is_empty() {
-            "transfer_failed".into()
-        } else {
-            detail
-        });
-    }
-    result
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn desktop_transfers_are_rejected_and_mark_is_accepted() {
+        assert!(serde_json::from_str::<JobKind>("\"copy\"").is_err());
+        assert!(serde_json::from_str::<JobKind>("\"move\"").is_err());
+        let mark = serde_json::from_str::<JobKind>("\"mark\"").unwrap();
+        assert_eq!(
+            serde_json::to_value(mark).unwrap(),
+            serde_json::json!("mark")
+        );
+    }
+    #[test]
+    fn acknowledged_commit_beats_late_cancel_and_uncertainty_beats_cancel() {
+        let result = |status: &str| FileResult {
+            name: "take.mp4".into(),
+            status: status.into(),
+            message: String::new(),
+            requested_name: None,
+            destination_name: None,
+        };
+        assert_eq!(settled_status(&[result("completed")], true), "completed");
+        assert_eq!(
+            settled_status(&[result("completed"), result("outcome_unknown")], true),
+            "failed"
+        );
+        assert_eq!(
+            settled_status(&[result("completed"), result("cancelled")], true),
+            "cancelled"
+        );
+        assert_eq!(
+            settled_status(&[result("retained"), result("completed")], false),
+            "failed"
+        );
+    }
+    #[test]
+    fn same_identity_cannot_be_reserved_twice() {
+        let (video, _) = rename_fixture();
+        let mut active = Reservations::default();
+        active
+            .reserve(7, "first", std::slice::from_ref(&video))
+            .unwrap();
+        assert_eq!(
+            active
+                .reserve(7, "second", std::slice::from_ref(&video))
+                .unwrap_err(),
+            "file_busy"
+        );
+        active
+            .reserve(8, "new-device", std::slice::from_ref(&video))
+            .unwrap();
+        active.release("first");
+        active.reserve(7, "second", &[video]).unwrap();
+    }
     fn rename_fixture() -> (Video, Entry) {
         let identity = Identity {
             device: 9_007_199_254_740_993,
