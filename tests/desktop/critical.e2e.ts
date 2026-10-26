@@ -380,7 +380,8 @@ describe('TakeDock release desktop acceptance', () => {
       0,
     );
     // The preceding batch deliberately changes unrelated source history.
-    // Start a fresh managed take so retirement is proved while eligible.
+    // Prove this is a managed eligible take before ordinary Stop finalizes it.
+    // Stop cancels automatic deletion; Mark must still retire its exact target.
     await button('Recording').click();
     await button('Start video').waitForExist();
     await button('Start video').click();
@@ -390,9 +391,7 @@ describe('TakeDock release desktop acceptance', () => {
         (await $('#speech-readiness').getAttribute('data-readiness')) ===
         'ready',
     );
-    await button('Stop').click();
-    await button('Start video').waitForExist();
-    const eligibleBeforeHandoff = await browser.execute(async () => {
+    const eligibleDuringTake = await browser.execute(async () => {
       const api = (
         window as unknown as {
           __TAURI_INTERNALS__: {
@@ -404,7 +403,9 @@ describe('TakeDock release desktop acceptance', () => {
       ).__TAURI_INTERNALS__;
       return (await api.invoke('bootstrap')).session.discard.eligible;
     });
-    assert.equal(eligibleBeforeHandoff, true);
+    assert.equal(eligibleDuringTake, true);
+    await button('Stop').click();
+    await button('Start video').waitForExist();
     await shortcut('v');
     await sourceRow('take-0002.mp4').$('button[data-mark]').waitForExist();
     await sourceRow('take-0002.mp4').$('button[data-mark]').click();
