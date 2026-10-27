@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/svelte';
+import { render, screen, fireEvent } from '@testing-library/svelte';
 import userEvent from '@testing-library/user-event';
 import { expect, it, vi } from 'vitest';
 import VideosPanel from './VideosPanel.svelte';
@@ -64,6 +64,15 @@ const videos: Video[] = [
     identity: '{"device":1,"inode":2}',
   },
 ];
+function nativeDisableBlur(control: HTMLElement) {
+  // jsdom ignores blur() while disabled. Emulate the Chromium transition,
+  // leaving the control disabled and checking that focus actually reached body.
+  const disabled = control.hasAttribute('disabled');
+  control.removeAttribute('disabled');
+  control.blur();
+  if (disabled) control.setAttribute('disabled', '');
+  expect(document.body).toHaveFocus();
+}
 it('discards a delete confirmation and selection across a new connection generation', async () => {
   const user = userEvent.setup();
   const onJob = vi.fn();
@@ -160,10 +169,15 @@ it.each(['next', 'previous', 'empty'] as const)(
       onRefresh: vi.fn(),
     });
     const name = where === 'previous' ? 'two.mp4' : 'one.mp4';
-    screen.getByRole('button', { name: `Mark ${name}` }).focus();
+    const mark = screen.getByRole('button', { name: `Mark ${name}` });
+    mark.focus();
+    await rerender({ pendingKeys: [where === 'previous' ? '1:2' : '1:1'] });
+    expect(mark).toBeDisabled();
+    // Chromium blurs a focused control when it becomes disabled; jsdom does not.
+    nativeDisableBlur(mark);
     const remaining =
       where === 'empty' ? [] : where === 'next' ? [videos[1]] : [videos[0]];
-    await rerender({ videos: remaining });
+    await rerender({ videos: remaining, pendingKeys: [] });
     expect(
       screen.getByRole('button', {
         name:
@@ -179,8 +193,12 @@ it('does not steal unrelated focus when a background handoff removes a row', asy
     onRefresh: vi.fn(),
   });
   const refresh = screen.getByRole('button', { name: 'Refresh videos' });
+  const mark = screen.getByRole('button', { name: 'Mark one.mp4' });
+  mark.focus();
+  await rerender({ pendingKeys: ['1:1'] });
+  nativeDisableBlur(mark);
   refresh.focus();
-  await rerender({ videos: [videos[1]] });
+  await rerender({ videos: [videos[1]], pendingKeys: [] });
   expect(refresh).toHaveFocus();
 });
 it('returns a disappearing batch action to the stable toolbar after the last source leaves', async () => {
@@ -192,8 +210,38 @@ it('returns a disappearing batch action to the stable toolbar after the last sou
   });
   await user.click(screen.getByRole('checkbox', { name: 'Select one.mp4' }));
   await user.click(screen.getByRole('button', { name: 'Mark selected' }));
-  await rerender({ videos: [] });
+  const mark = screen.getByRole('button', { name: 'Mark selected' });
+  await rerender({ pendingKeys: ['1:1'] });
+  nativeDisableBlur(mark);
+  await rerender({ videos: [], pendingKeys: [] });
   expect(screen.getByRole('button', { name: 'Refresh videos' })).toHaveFocus();
+});
+it('restores the initiating action after a retained pending result without moving the source', async () => {
+  const { rerender } = render(VideosPanel, {
+    videos,
+    onJob: vi.fn(),
+    onRefresh: vi.fn(),
+  });
+  const mark = screen.getByRole('button', { name: 'Mark one.mp4' });
+  mark.focus();
+  await rerender({ pendingKeys: ['1:1'] });
+  nativeDisableBlur(mark);
+  await rerender({ pendingKeys: [] });
+  expect(mark).toHaveFocus();
+});
+it('abandons remembered pending focus when the user clicks non-focusable content', async () => {
+  const { rerender } = render(VideosPanel, {
+    videos,
+    onJob: vi.fn(),
+    onRefresh: vi.fn(),
+  });
+  const mark = screen.getByRole('button', { name: 'Mark one.mp4' });
+  mark.focus();
+  await rerender({ pendingKeys: ['1:1'] });
+  nativeDisableBlur(mark);
+  await fireEvent.pointerDown(screen.getByRole('cell', { name: 'two.mp4' }));
+  await rerender({ videos: [videos[1]], pendingKeys: [] });
+  expect(document.body).toHaveFocus();
 });
 it('retains the selected focused native checkbox and uses fresh rename metadata', async () => {
   const user = userEvent.setup();

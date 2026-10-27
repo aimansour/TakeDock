@@ -73,7 +73,8 @@ fn successful_handshake_deletes_only_exact_identity() {
     std::fs::write(fixture.video("other.mp4"), b"unrelated").unwrap();
     let files = service(&fixture);
     let (_, results) = discard(&files, &fixture, Arc::new(AtomicBool::new(true)));
-    assert!(matches!(outcome(&results), DeleteOutcome::Deleted));
+    let actual = outcome(&results);
+    assert!(matches!(actual, DeleteOutcome::Deleted), "{actual:?}");
     assert!(!fixture.video("take.mp4").exists());
     let calls = std::fs::read_to_string(fixture.path().join("delete-calls.jsonl")).unwrap();
     let calls = calls

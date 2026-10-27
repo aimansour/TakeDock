@@ -38,4 +38,42 @@ function Read-HandoffManifest {
     }
     return $trial
 }
-Export-ModuleMember -Function Read-HandoffManifest
+function New-HandoffTracePath { param([string]$TrialRoot) Join-Path $TrialRoot ('trace-'+[guid]::NewGuid().ToString('N')+'.jsonl') }
+function Read-HandoffTrace {
+    param([string]$Path,[string]$JobId,[string]$Generation,[ValidateRange(1,10000)][int]$Files=1,[long]$Frequency)
+    $rows=@(Get-Content -LiteralPath $Path | Where-Object {$_} | ForEach-Object {ConvertFrom-Json -InputObject $_ -AsHashtable})
+    if(-not $rows.Count -or $rows[0].record -cne 'header' -or $rows[0].schema -ne 1 -or $rows[0].clock -cne 'qpc' -or $rows[0].frequency -notmatch '^[1-9][0-9]*$' -or [decimal]$rows[0].frequency -ne $Frequency -or $Frequency -le 0 -or @($rows | Where-Object record -EQ header).Count -ne 1){throw 'Invalid or mismatched QPC trace header.'}
+    $selected=@($rows | Where-Object {$_.record -ne 'header' -and $_.job_id -ceq $JobId})
+    $footers=@($selected | Where-Object record -EQ job_complete)
+    if($footers.Count -ne 1 -or $footers[0].dropped -ne 0 -or $footers[0].writer_status -cne 'ok' -or [string]$footers[0].generation -cne $Generation){throw 'Matching complete loss-free trace required.'}
+    $edges=@($selected | Where-Object record -EQ edge)
+    foreach($edge in $edges){if([string]$edge.generation -cne $Generation -or $edge.ticks -notmatch '^[0-9]+$' -or [decimal]$edge.ticks -le 0){throw 'Invalid trace identity or tick.'}}
+    $marks=@{}
+    foreach($stage in @('accepted','enqueued','worker','terminal')) {
+        $mark=@($edges | Where-Object {$_.stage -ceq $stage -and $_.edge -ceq 'mark' -and $null -eq $_.file_index})
+        if($mark.Count -ne 1){throw 'Missing or duplicate operation boundary.'}
+        $marks[$stage]=[decimal]$mark[0].ticks
+    }
+    if(-not ($marks.accepted -le $marks.enqueued -and $marks.enqueued -le $marks.worker -and $marks.worker -le $marks.terminal)){throw 'Unordered operation trace.'}
+    $spans=@()
+    foreach($group in @($edges | Where-Object edge -In @('begin','end') | Group-Object -Property stage,file_index)) {
+        $begin=@($group.Group | Where-Object edge -EQ begin);$end=@($group.Group | Where-Object edge -EQ end)
+        if($begin.Count -ne 1 -or $end.Count -ne 1){throw 'Incomplete or duplicate trace span.'}
+        $from=[decimal]$begin[0].ticks;$to=[decimal]$end[0].ticks
+        if($from -lt $marks.worker -or $to -lt $from -or $to -gt $marks.terminal){throw 'Unordered span trace.'}
+        $spans+=@(@{stage=$begin[0].stage;file_index=$begin[0].file_index;begin=$from;end=$to})
+    }
+    if(@($spans | Where-Object {$_.stage -ceq 'prepare' -and $null -eq $_.file_index}).Count -ne 1){throw 'Preparation span missing.'}
+    foreach($stage in @('initial_stat','handoff')) {
+        if(@($spans | Where-Object stage -CEQ $stage).Count -ne $Files){throw 'Unexpected per-file trace count.'}
+    }
+    $acks=@()
+    for($index=0;$index -lt $Files;$index++) {
+        $initial=@($spans | Where-Object {$_.stage -ceq 'initial_stat' -and $_.file_index -eq $index})
+        $handoff=@($spans | Where-Object {$_.stage -ceq 'handoff' -and $_.file_index -eq $index})
+        if($initial.Count -ne 1 -or $handoff.Count -ne 1 -or $initial[0].end -gt $handoff[0].begin){throw 'Per-file handoff evidence missing or unordered.'}
+        $acks+=@([string]$handoff[0].end)
+    }
+    return @{path=$Path;job_id=$JobId;generation=$Generation;frequency=[string]$Frequency;accepted_ticks=[string]$marks.accepted;terminal_ticks=[string]$marks.terminal;handoff_ack_ticks=$acks;backend_ms=[double](1000*($marks.terminal-$marks.accepted)/$Frequency);acceptance_to_handoff_ack_ms=@($acks | ForEach-Object {[double](1000*([decimal]$_-$marks.accepted)/$Frequency)});loss_free=$true}
+}
+Export-ModuleMember -Function Read-HandoffManifest,New-HandoffTracePath,Read-HandoffTrace

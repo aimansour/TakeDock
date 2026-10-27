@@ -113,7 +113,7 @@ jobs:
       - name: Owned phone trial guards and controller syntax
         shell: pwsh
         run: |
-          ./scripts/phone-handoff/Guard.test.ps1
+          & pwsh -NoProfile -File scripts/phone-handoff/Guard.test.ps1
           if($LASTEXITCODE -ne 0){throw 'Owned phone trial guards failed'}
           $controllerTokens=$null; $controllerErrors=$null
           $null=[Management.Automation.Language.Parser]::ParseFile((Join-Path (Get-Location) 'scripts/test-phone-handoff.ps1'),[ref]$controllerTokens,[ref]$controllerErrors)

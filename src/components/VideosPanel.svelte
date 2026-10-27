@@ -38,6 +38,30 @@
   let table = $state<HTMLTableElement>();
   let actionToolbar = $state<HTMLDivElement>();
   let renderedKeys: string[] = [];
+  type FocusContext = {
+    element: HTMLElement;
+    key?: string;
+    toolbar: boolean;
+    preferButton: boolean;
+    generation: number;
+  };
+  let pendingFocus: FocusContext | undefined;
+  $effect(() => {
+    const abandon = (event: Event) => {
+      if (
+        pendingFocus &&
+        event.target instanceof Node &&
+        !pendingFocus.element.contains(event.target)
+      )
+        pendingFocus = undefined;
+    };
+    document.addEventListener('focusin', abandon);
+    document.addEventListener('pointerdown', abandon, true);
+    return () => {
+      document.removeEventListener('focusin', abandon);
+      document.removeEventListener('pointerdown', abandon, true);
+    };
+  });
   function pending(video: Video) {
     return pendingKeys.includes(videoKey(video));
   }
@@ -45,6 +69,7 @@
     key: string | undefined,
     original: Element,
     preferButton: boolean,
+    retainToolbar = false,
   ) {
     void tick().then(() => {
       if (!toolbar?.isConnected) return;
@@ -53,6 +78,15 @@
         document.activeElement !== original
       )
         return;
+      if (
+        retainToolbar &&
+        original instanceof HTMLElement &&
+        original.isConnected &&
+        !original.hasAttribute('disabled')
+      ) {
+        original.focus();
+        return;
+      }
       const row =
         key &&
         Array.from(
@@ -74,36 +108,83 @@
   }
   $effect.pre(() => {
     const keys = videos.map(videoKey);
+    const pending = new Set(pendingKeys);
     const active = document.activeElement;
     const row =
       active instanceof HTMLElement
         ? active.closest<HTMLTableRowElement>('tr[data-video-key]')
         : null;
+    const rowKey =
+      row && table?.contains(row) ? row.dataset.videoKey : undefined;
     if (
-      active &&
-      row &&
-      table?.contains(row) &&
-      !keys.includes(row.dataset.videoKey ?? '')
+      !connected ||
+      pendingFocus?.generation !== generation ||
+      (active !== document.body && active !== pendingFocus?.element)
+    )
+      pendingFocus = undefined;
+    const chosen = videos.filter(
+      (video) => video.ready && selected.includes(videoKey(video)),
+    );
+    const inToolbar =
+      active instanceof HTMLElement && actionToolbar?.contains(active);
+    if (
+      active instanceof HTMLElement &&
+      ((rowKey && pending.has(rowKey)) ||
+        (inToolbar && chosen.some((video) => pending.has(videoKey(video)))))
     ) {
-      const position = Math.max(
-        0,
-        renderedKeys.indexOf(row.dataset.videoKey ?? ''),
-      );
+      pendingFocus = {
+        element: active,
+        key: rowKey,
+        toolbar: !!inToolbar,
+        preferButton: active.tagName === 'BUTTON',
+        generation,
+      };
+    }
+    const context =
+      active instanceof HTMLElement && rowKey
+        ? {
+            element: active,
+            key: rowKey,
+            toolbar: false,
+            preferButton: active.tagName === 'BUTTON',
+            generation,
+          }
+        : active === document.body
+          ? pendingFocus
+          : inToolbar && active instanceof HTMLElement
+            ? { element: active, toolbar: true, preferButton: true, generation }
+            : undefined;
+    if (context?.key && !keys.includes(context.key)) {
+      const position = Math.max(0, renderedKeys.indexOf(context.key));
       const next = [
         ...videos.slice(position),
         ...videos.slice(0, position).reverse(),
-      ].find((video) => video.ready && connected && !pending(video));
+      ].find(
+        (video) => video.ready && connected && !pending.has(videoKey(video)),
+      );
       moveRemovedFocus(
         next && videoKey(next),
-        active,
-        active.tagName === 'BUTTON',
+        context.element,
+        context.preferButton,
       );
+      pendingFocus = undefined;
+    } else if (context?.toolbar && !chosen.length) {
+      moveRemovedFocus(undefined, context.element, true);
+      pendingFocus = undefined;
     } else if (
-      active &&
-      actionToolbar?.contains(active) &&
-      !videos.some((video) => video.ready && selected.includes(videoKey(video)))
+      active === document.body &&
+      pendingFocus &&
+      (pendingFocus.key
+        ? !pending.has(pendingFocus.key)
+        : !chosen.some((video) => pending.has(videoKey(video))))
     ) {
-      moveRemovedFocus(undefined, active, true);
+      moveRemovedFocus(
+        pendingFocus.key,
+        pendingFocus.element,
+        pendingFocus.preferButton,
+        pendingFocus.toolbar,
+      );
+      pendingFocus = undefined;
     }
     renderedKeys = keys;
   });

@@ -25,7 +25,23 @@ function Read([hashtable]$Value) {
     $Value | ConvertTo-Json -Depth 20 | Set-Content -LiteralPath $manifest
     Read-HandoffManifest -Manifest $manifest -TrialRoot $trial
 }
+function ValidTrace {
+    $rows=@(@{record='header';schema=1;clock='qpc';frequency='1000';process=123})
+    foreach($boundary in @(@('accepted','mark','10',$null),@('enqueued','mark','11',$null),@('worker','mark','12',$null),@('prepare','begin','13',$null),@('prepare','end','14',$null),@('initial_stat','begin','15',0),@('initial_stat','end','16',0),@('handoff','begin','17',0),@('handoff','end','18',0),@('terminal','mark','19',$null))) {
+        $rows+=@(@{record='edge';job_id='sample';generation='3';stage=$boundary[0];edge=$boundary[1];ticks=$boundary[2];file_index=$boundary[3]})
+    }
+    $rows+=@(@{record='job_complete';job_id='sample';generation='3';dropped=0;writer_status='ok'})
+    return $rows
+}
+$trace=Join-Path $trial 'trace-test.jsonl'
+function Trace([object[]]$Rows,[string]$Job='sample') {
+    $Rows | ForEach-Object {ConvertTo-Json -InputObject $_ -Compress} | Set-Content -LiteralPath $trace
+    Read-HandoffTrace -Path $trace -JobId $Job -Generation '3' -Files 1 -Frequency 1000
+}
 try {
+    $firstTrace=New-HandoffTracePath -TrialRoot $trial
+    $secondTrace=New-HandoffTracePath -TrialRoot $trial
+    if($firstTrace -ceq $secondTrace){throw 'Restarted native sessions reused a create-new trace path.'}
     $good=Read (Valid)
     if($good.fixtures[0].identity -cne (Valid).fixtures[0].identity){throw 'Opaque identity was changed.'}
     $bad=Valid; $bad.kind='transfer-performance'; Reject {Read $bad}
@@ -42,6 +58,16 @@ try {
     $bad=Valid; $bad.operations+=@($bad.operations[0]); Reject {Read $bad}
     $bad=Valid; $bad.handoff_root='/sdcard/DCIM/OpenCamera'; Reject {Read $bad}
     $bad=Valid; $bad.root=Split-Path $trial -Parent; Reject {Read $bad}
+    $timing=Trace @(ValidTrace)
+    if($timing.backend_ms -ne 9 -or $timing.handoff_ack_ticks[0] -cne '18'){throw 'Handoff timing boundaries were not preserved.'}
+    Reject {Trace @((ValidTrace) | Where-Object record -NE job_complete)}
+    $broken=@(ValidTrace);$broken[-1].dropped=1;Reject {Trace $broken}
+    $broken=@(ValidTrace);$broken[-1].generation='4';Reject {Trace $broken}
+    $broken=@(ValidTrace);$broken[0].frequency='2000';Reject {Trace $broken}
+    Reject {Trace @((ValidTrace) | Where-Object {-not ($_.record -eq 'edge' -and $_.stage -eq 'handoff' -and $_.edge -eq 'end')})}
+    Reject {Trace @(ValidTrace) 'other-job'}
+    $broken=@(ValidTrace);$broken+=$broken[1];Reject {Trace $broken}
+    $broken=@(ValidTrace);foreach($edge in @((ValidTrace) | Where-Object {$_.ContainsKey('stage') -and $_.stage -in @('initial_stat','handoff')})){$edge.file_index=1;$broken+=@($edge)};Reject {Trace $broken}
     'PASS: fresh handoff manifests bind exact owned sources, references and operations; old trials cannot authorize mutations.'
 } finally {
     $resolved=[IO.Path]::GetFullPath($trial)

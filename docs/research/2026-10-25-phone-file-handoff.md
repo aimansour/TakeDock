@@ -1,8 +1,10 @@
 # One-way phone-folder handoff verification
 
 Status on 2026-10-27 (Africa/Cairo): implementation and the initial full hosted
-acceptance passed. The dedicated physical-phone trial and final Native whole-branch
-review are pending. This document does not claim measured phone timings yet.
+acceptance passed. The fresh Native whole-branch review found two material issues;
+the pending-control focus regression and restarted-session trace allocation now
+have RED-to-GREEN fixes. Final hosted and physical acceptance remain pending. This
+document does not claim measured phone timings yet.
 
 ## Behavior under test
 
@@ -53,8 +55,10 @@ serial, manifest, trial root and native-driver paths. Each trial has new owned
 `TDHandoff-<trial-id>-…` names and an independent manifest/journal. Previously owned
 test assets may supply read-only bytes; their old allowlists/journals do not grant
 mutation authority to the new trial. Reference copies are hashed and fully decoded
-before any destructive action. Shared user settings are preserved through an
-isolated application profile.
+before any destructive action. The controller snapshots the real Windows Known
+Folder settings file, writes its temporary preferences only after checking for
+concurrent changes, and restores the exact original bytes after closing the owned
+app. Unexpected values are preserved for reconciliation instead of overwritten.
 
 The ordinary release build exercises single/batch Mark, source Rename/Delete,
 collision retention, and preservation of an already handed-off sentinel across
@@ -70,11 +74,16 @@ interval. Diagnostic acceptance/handoff-acknowledgement/terminal observations ar
 reported separately from the ordinary release interval; they are not the phone's
 filesystem clock.
 
-No physical-phone mutation has run for this change yet. The real SDK server and
-saved trust remain present, but the phone was unavailable on resumption: the old
-endpoint refused connection and ordinary/direct mDNS discovery returned no
-service. The user was asked to enable Wi-Fi and wireless debugging, without a new
-pairing code or screenshot. The controller returns Home and sleeps the screen in
+No native Mark/Delete/Rename mutation has run for this change yet. After Wi-Fi
+and wireless debugging were enabled, the saved SDK pairing reconnected without a
+new code. Owned source fixtures were staged. A startup-only probe exposed that
+Tauri uses Windows Known Folders despite APPDATA overrides. Startup normalized
+the actual settings before the probe failed navigation; pre-probe raw bytes were
+not captured, so exact raw restoration of that first attempt is not claimed. No
+file action was dispatched. The controller now backs up the actual profile and
+uses the existing tested guarded restore. Diagnostic sessions each receive a new
+trace path and require complete loss-free matching QPC evidence. The controller
+returns Home and sleeps the screen in
 cleanup, checks that Open Camera is not resumed, and preserves the shared ADB server.
 
 ## Acceptance coverage and limits
@@ -89,7 +98,7 @@ cleanup, checks that Open Camera is not resumed, and preserves the shared ADB se
 | Delete/Rename, recording/readiness/current-take discard regressions | Backend/process suites and all four native cases |
 | Legacy destination ignored without a Windows video folder | Rust settings tests, UI migration tests and native restart |
 | Actual A15/Phone Link integrity and small/500 MB timings | Pending physical trial |
-| Fresh whole-branch Native review | Pending final evidence |
+| Fresh whole-branch Native review | Completed; two Important findings fixed with regression tests; final hosted evidence pending |
 
 DOM/native assertions do not constitute a listening NVDA audit. No new listening
 screen-reader claim is made. Earlier desktop-transfer throughput reports remain

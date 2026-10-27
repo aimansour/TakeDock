@@ -39,16 +39,15 @@ $trial.adb_path=$Adb
 $trial.journal=Join-Path $TrialRoot 'journal.jsonl'
 if(Test-Path -LiteralPath $trial.journal){throw 'This trial has already started. Preserve its journal; never retry its mutations.'}
 $trial.helper_path='/data/local/tmp/takedock-files-'+@($trial.resources | Where-Object path -CEQ 'file-helper/arm64-v8a/takedock-files')[0].sha256
-$realProfile=Join-Path $env:APPDATA 'app.takedock/settings.json'
+$realProfile=Join-Path ([Environment]::GetFolderPath('ApplicationData')) 'app.takedock/settings.json'
+$profileBytes=if(Test-Path -LiteralPath $realProfile){[IO.File]::ReadAllBytes($realProfile)}else{$null}
 $profileBefore=if(Test-Path -LiteralPath $realProfile){(Get-FileHash -LiteralPath $realProfile -Algorithm SHA256).Hash}else{''}
-$isolated=Join-Path $TrialRoot 'profile'
-$profilePath=Join-Path $isolated 'app.takedock/settings.json'
-$null=New-Item -ItemType Directory -Path (Split-Path $profilePath -Parent)
 $preferences=if($profileBefore){Get-Content -LiteralPath $realProfile -Raw | ConvertFrom-Json -AsHashtable}else{@{}}
 $settings=@{language='en';adb_path=$Adb;success_sound=$false;ready_sound=$false;ready_delay_ms=800;verification_ms=10000}
 foreach($key in @('ready_delay_ms','verification_ms')){if($preferences.ContainsKey($key)){$settings[$key]=$preferences[$key]}}
-$settings | ConvertTo-Json | Set-Content -LiteralPath $profilePath
-$driver=$null;$session=$null;$failure=$null
+$profileWritten=[Text.Encoding]::UTF8.GetBytes(($settings | ConvertTo-Json))
+$profilePrepared=$false
+$driver=$null;$session=$null;$failure=$null;$tracePath=$null
 $results=[Collections.Generic.List[object]]::new()
 $settled=[Collections.Generic.List[object]]::new()
 function Journal([hashtable]$Entry){Write-TransferJournal -Trial $trial -Entry $Entry}
@@ -97,15 +96,17 @@ function Open-Native {
     $info.UseShellExecute=$false;$info.CreateNoWindow=$true
     $info.RedirectStandardOutput=$true;$info.RedirectStandardError=$true
     foreach($argument in @('--port',[string]$port,'--native-port',[string]$nativePort,'--native-driver',$EdgeDriver)){$info.ArgumentList.Add($argument)}
-    $info.Environment['APPDATA']=$isolated
-    $info.Environment['LOCALAPPDATA']=Join-Path $TrialRoot 'local-profile'
-    if($trial.configuration -ceq 'desktop,transfer-diagnostics'){$info.Environment['TAKEDOCK_TRANSFER_TRACE']=Join-Path $TrialRoot 'trace.jsonl'}
-    else {$null=$info.Environment.Remove('TAKEDOCK_TRANSFER_TRACE')}
+    if($trial.configuration -ceq 'desktop,transfer-diagnostics') {
+        $script:tracePath=New-HandoffTracePath -TrialRoot $TrialRoot
+        $info.Environment['TAKEDOCK_TRANSFER_TRACE']=$tracePath
+        Journal @{event='trace_session_allocated';path=$tracePath}
+    } else {$script:tracePath=$null;$null=$info.Environment.Remove('TAKEDOCK_TRANSFER_TRACE')}
     $process=[Diagnostics.Process]::new();$process.StartInfo=$info
     if(-not $process.Start()){throw 'Owned native driver failed to launch.'}
     $script:driver=@{process=$process;logs=@($process.StandardOutput.ReadToEndAsync(),$process.StandardError.ReadToEndAsync());port=$port}
     Wait-Until {try {(Invoke-RestMethod -Uri "http://127.0.0.1:$port/status" -TimeoutSec 1).value.ready} catch {$false}} 'Native driver unavailable.'
     $script:session=Open-TransferSession -Executable $Executable -DriverUri ([uri]"http://127.0.0.1:$port")
+    Journal @{event='native_session_opened';session_id=$session.id;trace_path=$tracePath}
     Wait-Until {(Bootstrap).session.connected} 'Physical phone session unavailable.'
     Wait-Until {try {[bool](Button 'Videos')} catch {$false}} 'Native source-navigation control unavailable.'
     Click (Button 'Videos')
@@ -141,6 +142,14 @@ try {
         & $trial.ffmpeg -nostdin -v error -xerror -i $fixture.backup -f null - 2>> (Join-Path $TrialRoot 'reference-decode.log')
         if($LASTEXITCODE -ne 0){throw 'Reference backup did not fully decode.'}
     }
+    if(Get-Process takedock -ErrorAction SilentlyContinue){throw 'Close existing TakeDock before preparing its shared profile.'}
+    $currentProfile=if(Test-Path -LiteralPath $realProfile){(Get-FileHash -LiteralPath $realProfile -Algorithm SHA256).Hash}else{''}
+    if($currentProfile -cne $profileBefore){throw 'Shared profile changed before the trial; no overwrite.'}
+    if($null -ne $profileBytes){[IO.File]::WriteAllBytes((Join-Path $TrialRoot 'shared-profile-before.bin'),$profileBytes)}
+    Journal @{event='profile_backup_saved';sha256=$profileBefore;original_exists=($null -ne $profileBytes)}
+    $null=New-Item -ItemType Directory -Path (Split-Path $realProfile -Parent) -Force
+    $profilePrepared=$true
+    [IO.File]::WriteAllBytes($realProfile,$profileWritten)
     Open-Native
     $baselineGeneration=(Bootstrap).session.generation
     $baseline=@(Videos $baselineGeneration)
@@ -220,7 +229,7 @@ try {
         $end=[Diagnostics.Stopwatch]::GetTimestamp()
         $uncertainty=[math]::Max($uncertainty,125+$observation.Elapsed.TotalMilliseconds)
         $focus=Evaluate 'return {tag:document.activeElement?.tagName,id:document.activeElement?.id,row_key:document.activeElement?.closest("tr[data-video-key]")?.dataset.videoKey??null}'
-        $result=@{operation=$operation.id;kind=$operation.kind;job=$job;notice=$notice[0];configuration=$trial.configuration;ui_ms=1000.0*($end-$start)/[Diagnostics.Stopwatch]::Frequency;observation_uncertainty_ms=$uncertainty;focus_after=$focus;start_ticks=[string]$start;end_ticks=[string]$end;clock_frequency=[string][Diagnostics.Stopwatch]::Frequency}
+        $result=@{operation=$operation.id;kind=$operation.kind;job=$job;notice=$notice[0];configuration=$trial.configuration;trace_path=$tracePath;ui_ms=1000.0*($end-$start)/[Diagnostics.Stopwatch]::Frequency;observation_uncertainty_ms=$uncertainty;focus_after=$focus;start_ticks=[string]$start;end_ticks=[string]$end;clock_frequency=[string][Diagnostics.Stopwatch]::Frequency}
         $results.Add($result);Journal @{event='native_settled';result=$result}
         foreach($fixture in $selected) {
             $name=if($operation.kind -eq 'rename'){$operation.stem+'.mp4'}else{$fixture.name}
@@ -240,6 +249,17 @@ try {
             }
             if($operation.kind -eq 'collision' -and (RemoteHash $trial.handoff_root $name) -cne $fixture.collision_sha256){throw 'Existing collision destination changed.'}
         }
+        if($tracePath) {
+            $traceWait=[Diagnostics.Stopwatch]::StartNew()
+            do {
+                try {$timing=Read-HandoffTrace -Path $tracePath -JobId $job.id -Generation ([string]$job.generation) -Files $job.count -Frequency ([Diagnostics.Stopwatch]::Frequency);break}
+                catch {if($traceWait.Elapsed.TotalSeconds -gt 10){throw};Start-Sleep -Milliseconds 125}
+            }while($true)
+            if([decimal]$timing.accepted_ticks -lt $start -or [decimal]$timing.terminal_ticks -gt $end){throw 'Backend timing lies outside the matched native interval.'}
+            $result.backend=$timing
+            Journal @{event='diagnostic_operation_verified';operation=$operation.id;timing=$timing}
+        }
+        Journal @{event='integrity_verified';operation=$operation.id;job_id=$job.id}
         Write-Host ("Verified {0}: native settlement {1:N1} ms; integrity checks excluded." -f $operation.id,$result.ui_ms)
     }
     Close-Native;Open-Native
@@ -251,6 +271,10 @@ try {
 } catch {$failure=$_;Journal @{event='trial_failed';reason=$_.Exception.Message}}
 finally {
     try {Close-Native} catch {Journal @{event='native_cleanup_failed';reason=$_.Exception.Message};if(-not $failure){$failure=$_}}
+    if($profilePrepared) {
+        try {Restore-TransferProfile -Path $realProfile -Before $profileBytes -LastWritten $profileWritten;Journal @{event='profile_restored';sha256=$profileBefore}}
+        catch {if(Test-Path -LiteralPath $realProfile){Copy-Item -LiteralPath $realProfile -Destination (Join-Path $TrialRoot 'shared-profile-unexpected.bin')};Journal @{event='profile_restore_failed';reason=$_.Exception.Message};if(-not $failure){$failure=$_}}
+    }
     try {
         $null=Invoke-TransferAdb -Trial $trial -Arguments @('shell','input','keyevent','KEYCODE_HOME')
         $null=Invoke-TransferAdb -Trial $trial -Arguments @('shell','input','keyevent','KEYCODE_SLEEP')
@@ -261,7 +285,7 @@ finally {
         if($resumed -match 'net\.sourceforge\.opencamera'){throw 'Open Camera is still foreground after Home/sleep.'}
         $null=Invoke-TransferAdb -Trial $trial -Arguments @('get-state')
         $profileAfter=if(Test-Path -LiteralPath $realProfile){(Get-FileHash -LiteralPath $realProfile -Algorithm SHA256).Hash}else{''}
-        if($profileAfter -cne $profileBefore){throw 'The shared user profile changed during this isolated trial; no automatic overwrite.'}
+        if($profileAfter -cne $profileBefore){throw 'The shared user profile was not restored exactly; preserve the snapshots.'}
         Journal @{event='cleanup_verified';phone_asleep=$true;camera_foreground=$false;adb_pairing_preserved=$true;shared_profile_unchanged=$true}
     } catch {Journal @{event='cleanup_failed';reason=$_.Exception.Message};if(-not $failure){$failure=$_}}
 }
