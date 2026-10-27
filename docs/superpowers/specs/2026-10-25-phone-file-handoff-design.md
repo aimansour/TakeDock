@@ -1,7 +1,10 @@
 # One-way phone-folder handoff; remove desktop transfers
 
 Date: 2026-10-25, Africa/Cairo.
-Status: approved by the user on 2026-10-25; implementation planning is next.
+Status: approved by the user on 2026-10-25; Native implementation authorized on
+2026-10-26. Implementation, fresh whole-branch review and final hosted/physical
+acceptance passed on 2026-10-27. Evidence is tracked in
+`docs/research/2026-10-25-phone-file-handoff.md`.
 Working base: `1dbb32e25e2f22ee151c2ed1a2eb414d660d5610`.
 
 ## Intent and user decisions
