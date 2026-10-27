@@ -88,6 +88,7 @@ fn main() {
                     .open(root.join("commands.jsonl"))
                     .unwrap();
                 writeln!(trace, "{}", json!({"key":key,"command":line,"time":SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis()})).unwrap();
+                let _state_lock = fixture_state_lock(&root);
                 let mut state = read_state(&root);
                 let previous_state = state["state"].as_str().unwrap_or("idle").to_owned();
                 state["state"] = json!(match (key, state["state"].as_str().unwrap_or("idle")) {
@@ -142,7 +143,7 @@ fn main() {
                 }
                 fs::write(root.join("state.tmp"), state.to_string()).unwrap();
                 fs::rename(root.join("state.tmp"), root.join("state.json")).unwrap();
-                finish_fixture_take(&root);
+                finish_fixture_take_locked(&root);
                 let marker = line
                     .split("echo ")
                     .nth(1)
@@ -250,8 +251,9 @@ fn main() {
             }
         }
         ["push", from, to] => {
-            fs::write(root.join("helper-push-started"), b"").unwrap();
             fs::write(root.join("helper-push-pid"), std::process::id().to_string()).unwrap();
+            // Publish readiness only after its dependent PID file is complete.
+            fs::write(root.join("helper-push-started"), b"").unwrap();
             while root.join("hold-helper-push").exists() {
                 thread::sleep(Duration::from_millis(10));
             }
@@ -271,10 +273,15 @@ fn main() {
             "android.intent.action.MEDIA_SCANNER_SCAN_FILE",
             "-d",
             uri,
-        ] if uri.starts_with("file:///sdcard/DCIM/OpenCamera/") => {
+        ] if uri.starts_with("file:///sdcard/DCIM/OpenCamera/")
+            || uri.starts_with("file:///sdcard/DCIM/TakeDock/") =>
+        {
             fs::write(root.join("index-started"), b"").unwrap();
             while root.join("hold-index").exists() {
                 thread::sleep(Duration::from_millis(10));
+            }
+            if root.join("fail-handoff-index").exists() {
+                std::process::exit(1);
             }
             println!("Broadcast completed: result=0");
         }
@@ -301,6 +308,36 @@ fn main() {
         }
         ["exec-out", command] => {
             let args = shell_words::split(command).unwrap();
+            if let [kind, separator, path] = args
+                .iter()
+                .map(String::as_str)
+                .collect::<Vec<_>>()
+                .as_slice()
+                && ["cat", "sha256sum"].contains(kind)
+                && *separator == "--"
+                && let Some(name) = path.strip_prefix("/sdcard/DCIM/OpenCamera/")
+            {
+                takedock_files::validate_name(name).unwrap();
+                let file = root.join("videos").join(name);
+                if *kind == "cat" {
+                    if root.join("fail-read").exists() {
+                        std::process::exit(1);
+                    }
+                    io::copy(&mut fs::File::open(file).unwrap(), &mut io::stdout().lock()).unwrap();
+                } else {
+                    use sha2::{Digest, Sha256};
+                    let digest = if root.join("bad-hash").exists() {
+                        "0".repeat(64)
+                    } else {
+                        Sha256::digest(fs::read(file).unwrap())
+                            .iter()
+                            .map(|byte| format!("{byte:02x}"))
+                            .collect::<String>()
+                    };
+                    println!("{digest}  {path}");
+                }
+                return;
+            }
             if !args
                 .first()
                 .is_some_and(|path| path.starts_with("/data/local/tmp/takedock-files-"))
@@ -320,6 +357,12 @@ fn main() {
     }
 }
 fn file_command(root: &Path, args: &[String]) -> Result<(), String> {
+    let mut trace = fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(root.join("helper-calls.jsonl"))
+        .map_err(|e| e.to_string())?;
+    writeln!(trace, "{}", json!(args)).map_err(|e| e.to_string())?;
     let videos = takedock_files::Root::open(&root.join("videos"))?;
     let borrowed = args.iter().map(String::as_str).collect::<Vec<_>>();
     match borrowed.as_slice() {
@@ -354,6 +397,23 @@ fn file_command(root: &Path, args: &[String]) -> Result<(), String> {
             }
         }
         ["stat", name] => println!("{}", serde_json::to_string(&videos.stat(name)?).unwrap()),
+        ["handoff-guarded", name, expected, operation] => {
+            fs::create_dir_all(root.join("handoff")).map_err(|e| e.to_string())?;
+            let destination = takedock_files::Root::open(&root.join("handoff"))?;
+            let expected = serde_json::from_str(expected).map_err(|e| e.to_string())?;
+            takedock_files::handoff::serve(
+                &videos,
+                &destination,
+                name,
+                &expected,
+                operation,
+                takedock_files::handoff::read_permit_stdin,
+                &mut HandoffOutput {
+                    root,
+                    bytes: Vec::new(),
+                },
+            )?;
+        }
         ["delete-guarded", name, expected, operation] => {
             let mut trace = fs::OpenOptions::new()
                 .create(true)
@@ -383,44 +443,13 @@ fn file_command(root: &Path, args: &[String]) -> Result<(), String> {
                 },
             )?;
         }
-        [kind, name, expected] if ["read", "hash", "delete"].contains(kind) => {
+        ["delete", name, expected] => {
             let identity = serde_json::from_str(expected).map_err(|e| e.to_string())?;
             if !videos.video_ready(name)? {
                 return Err("video_not_finalized".into());
             }
-            match *kind {
-                "read" => {
-                    fs::write(root.join("read-started"), b"").unwrap();
-                    if root.join("fail-read").exists() {
-                        return Err("fixture_transfer_failure".into());
-                    }
-                    if root.join("slow-read").exists() {
-                        let mut slow = SlowWriter(io::stdout().lock());
-                        videos.read(name, &identity, &mut slow)?;
-                    } else {
-                        videos.read(name, &identity, &mut io::stdout().lock())?;
-                    }
-                }
-                "hash" => {
-                    fs::write(root.join("hash-started"), b"").unwrap();
-                    while root.join("hold-hash").exists() {
-                        thread::sleep(Duration::from_millis(10));
-                    }
-                    println!(
-                        "{}",
-                        if root.join("bad-hash").exists() {
-                            "0".repeat(64)
-                        } else {
-                            videos.hash(name, &identity)?
-                        }
-                    );
-                }
-                "delete" => {
-                    fs::write(root.join("delete-called"), name).unwrap();
-                    videos.delete(name, &identity)?;
-                }
-                _ => unreachable!(),
-            }
+            fs::write(root.join("delete-called"), name).unwrap();
+            videos.delete(name, &identity)?;
         }
         ["rename", name, new_name, expected] => {
             if !videos.video_ready(name)? {
@@ -440,7 +469,22 @@ fn file_command(root: &Path, args: &[String]) -> Result<(), String> {
     }
     Ok(())
 }
+fn fixture_state_lock(root: &Path) -> fs::File {
+    let handle = fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .read(true)
+        .write(true)
+        .open(root.join("capture-state.lock"))
+        .unwrap();
+    handle.lock().unwrap();
+    handle
+}
 fn finish_fixture_take(root: &Path) {
+    let _state_lock = fixture_state_lock(root);
+    finish_fixture_take_locked(root);
+}
+fn finish_fixture_take_locked(root: &Path) {
     if !root.join("record-take-files").exists()
         || root.join("hold-finalization").exists()
         || read_state(root)["state"] != "idle"
@@ -478,6 +522,51 @@ fn finish_fixture_take(root: &Path) {
 struct GuardOutput<'a> {
     root: &'a Path,
     bytes: Vec<u8>,
+}
+struct HandoffOutput<'a> {
+    root: &'a Path,
+    bytes: Vec<u8>,
+}
+impl Write for HandoffOutput<'_> {
+    fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+        use takedock_files::handoff::{Message, Outcome};
+        self.bytes.extend(bytes);
+        while let Some(end) = self.bytes.iter().position(|byte| *byte == b'\n') {
+            let line: Vec<_> = self.bytes.drain(..=end).collect();
+            let message: Message = serde_json::from_slice(&line).unwrap();
+            let mut trace = fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(self.root.join("handoff-outcomes.jsonl"))?;
+            trace.write_all(&line)?;
+            match message {
+                Message::Prepared { .. } => {
+                    fs::write(self.root.join("handoff-started"), b"")?;
+                    while self.root.join("hold-handoff-before-permit").exists() {
+                        thread::sleep(Duration::from_millis(10));
+                    }
+                }
+                Message::Result {
+                    outcome: Outcome::HandedOff { .. },
+                    ..
+                } => {
+                    fs::write(self.root.join("handoff-committed"), b"")?;
+                    while self.root.join("hold-handoff-after-commit").exists() {
+                        thread::sleep(Duration::from_millis(10));
+                    }
+                    if self.root.join("drop-handoff-result").exists() {
+                        return Err(io::ErrorKind::BrokenPipe.into());
+                    }
+                }
+                _ => {}
+            }
+            io::stdout().lock().write_all(&line)?;
+        }
+        Ok(bytes.len())
+    }
+    fn flush(&mut self) -> io::Result<()> {
+        io::stdout().flush()
+    }
 }
 impl Write for GuardOutput<'_> {
     fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
@@ -585,16 +674,5 @@ fn watch_files(root: &Path, videos: &takedock_files::Root, stream: &str) -> Resu
             heartbeat = Instant::now();
         }
         thread::sleep(Duration::from_millis(25));
-    }
-}
-struct SlowWriter<W: Write>(W);
-impl<W: Write> Write for SlowWriter<W> {
-    fn write(&mut self, buffer: &[u8]) -> io::Result<usize> {
-        thread::sleep(Duration::from_millis(20));
-        let size = buffer.len().min(4096);
-        self.0.write(&buffer[..size])
-    }
-    fn flush(&mut self) -> io::Result<()> {
-        self.0.flush()
     }
 }

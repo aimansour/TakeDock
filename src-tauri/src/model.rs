@@ -32,7 +32,6 @@ pub enum SpeechReadiness {
 #[serde(default)]
 pub struct Settings {
     pub language: String,
-    pub destination: String,
     pub adb_path: String,
     pub success_sound: bool,
     pub ready_sound: bool,
@@ -43,7 +42,6 @@ impl Default for Settings {
     fn default() -> Self {
         Self {
             language: "en".into(),
-            destination: String::new(),
             adb_path: String::new(),
             success_sound: false,
             ready_sound: true,

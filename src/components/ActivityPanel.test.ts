@@ -5,9 +5,9 @@ import type { JobEvent, FileNotice } from '../lib/types';
 const notice = (outcome: FileNotice['outcome'] = 'completed'): FileNotice => ({
   key: { generation: 3, owner: 'job', operation_id: 'one' },
   revision: 1,
-  kind: 'copy',
+  kind: 'mark',
   outcome,
-  code: outcome === 'failed' ? 'copy_hash_mismatch' : outcome,
+  code: outcome === 'failed' ? 'handoff_failed' : outcome,
   warnings: [],
   name: 'one.mp4',
   completed: outcome === 'completed' ? 2 : 0,
@@ -18,12 +18,10 @@ const notice = (outcome: FileNotice['outcome'] = 'completed'): FileNotice => ({
 const job: JobEvent = {
   id: 'one',
   generation: 3,
-  kind: 'copy',
+  kind: 'mark',
   status: 'running',
-  phase: 'copying',
+  phase: 'marking',
   name: 'one.mp4',
-  bytes: 30,
-  total: 100,
   completed: 0,
   count: 2,
   message: '',
@@ -45,20 +43,21 @@ it('shows indeterminate listing progress while keeping completed results availab
     screen.getByRole('progressbar', { name: 'Activity progress' }),
   ).toHaveAttribute('value', '100');
 });
-it('exposes native changing progress without live speech and keeps verification distinct', async () => {
+it('uses native indeterminate marking progress and completed counts without transfer bytes or speech', async () => {
   const { rerender, container } = render(ActivityPanel, {
     jobs: [job],
     loading: false,
     language: 'en',
   });
   let progress = screen.getByRole('progressbar', { name: 'Activity progress' });
-  expect(progress).toHaveAttribute('value', '30');
+  expect(progress).not.toHaveAttribute('value');
   expect(progress).toHaveAttribute('max', '100');
-  expect(screen.getByText('Copying video')).toBeInTheDocument();
-  await rerender({ jobs: [{ ...job, phase: 'verifying', bytes: 100 }] });
+  expect(screen.getByText('Marking video')).toBeInTheDocument();
+  expect(screen.queryByText(/MB/)).toBeNull();
+  await rerender({ jobs: [{ ...job, completed: 1 }] });
   progress = screen.getByRole('progressbar', { name: 'Activity progress' });
   expect(progress).not.toHaveAttribute('value');
-  expect(screen.getByText('Verifying copied video')).toBeInTheDocument();
+  expect(screen.getByText('Marking video')).toBeInTheDocument();
   await rerender({
     jobs: [{ ...job, status: 'completed', completed: 2 }],
     notices: [notice()],
@@ -76,13 +75,13 @@ it('keeps active processing visible before newer queued jobs and reports failure
     loading: false,
     language: 'en',
   });
-  expect(screen.getByText('Copying video')).toBeInTheDocument();
+  expect(screen.getByText('Marking video')).toBeInTheDocument();
   await rerender({
-    jobs: [{ ...job, status: 'failed', message: 'copy_hash_mismatch' }],
+    jobs: [{ ...job, status: 'failed', message: 'handoff_failed' }],
     notices: [notice('failed')],
   });
   expect(screen.getByText('Failed')).toBeInTheDocument();
-  expect(screen.getByText(/The copied file did not match/)).toBeInTheDocument();
+  expect(screen.getByText(/could not be handed off/)).toBeInTheDocument();
 });
 it('retires terminal progress and keeps all active jobs cancellable', async () => {
   const { rerender } = render(ActivityPanel, {

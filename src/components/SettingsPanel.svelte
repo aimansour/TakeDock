@@ -1,12 +1,11 @@
 <script lang="ts">
   import type { Settings } from '../lib/types';
-  import { defaultSettings } from '../lib/types';
+  import { defaultSettings, withoutDesktopDestination } from '../lib/types';
   import { t } from '../lib/i18n';
   import type { Snippet } from 'svelte';
   let {
     settings,
     onSave,
-    onFolder,
     onAdb,
     onReconnect,
     onError = () => {},
@@ -14,7 +13,6 @@
   }: {
     settings: Settings;
     onSave: (settings: Settings) => void;
-    onFolder: () => Promise<string | null>;
     onAdb: () => Promise<string | null>;
     onReconnect: () => void;
     onError?: (message: string) => void;
@@ -23,16 +21,13 @@
   let draft = $state<Settings>({ ...defaultSettings });
   let seconds = $state(10);
   $effect(() => {
-    draft = { ...settings };
+    draft = withoutDesktopDestination(settings);
     seconds = settings.verification_ms / 1000;
   });
-  async function pick(kind: 'folder' | 'adb') {
+  async function pickAdb() {
     try {
-      const path = await (kind === 'folder' ? onFolder() : onAdb());
-      if (path) {
-        if (kind === 'folder') draft.destination = path;
-        else draft.adb_path = path;
-      }
+      const path = await onAdb();
+      if (path) draft.adb_path = path;
     } catch (error) {
       onError(String(error));
     }
@@ -57,21 +52,11 @@
       ><option value="en">English</option><option value="ar">العربية</option
       ></select
     >
-    <label for="destination">{t(settings.language, 'destination')}</label>
-    <div class="input-row">
-      <input
-        id="destination"
-        bind:value={draft.destination}
-        dir="auto"
-      /><button type="button" onclick={() => void pick('folder')}
-        >{t(settings.language, 'chooseFolder')}</button
-      >
-    </div>
     <label for="adb-path">{t(settings.language, 'adbPath')}</label>
     <div class="input-row">
       <input id="adb-path" bind:value={draft.adb_path} dir="auto" /><button
         type="button"
-        onclick={() => void pick('adb')}
+        onclick={() => void pickAdb()}
         >{t(settings.language, 'chooseAdb')}</button
       >
     </div>

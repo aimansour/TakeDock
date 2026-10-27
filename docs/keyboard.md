@@ -22,17 +22,20 @@ Ctrl+Shift+N also works inside inputs; it does not trigger a camera command.
 Screen reader users may need their ordinary pass-through command if a reader
 intercepts a shortcut. Camera actions require Open Camera active in video mode.
 
-Videos use native checkboxes and a table. Copy, move, and delete accept multiple
-selected completed files; rename appears only for one. Delete presents one batch
+Videos use native checkboxes and a table. Mark selected and Delete accept multiple
+selected completed files; rename appears only for one. Selection alone does not
+move a video. Each ready row also has a Mark button named with its filename.
+Mark moves the video into DCIM/TakeDock on the phone and removes its source row
+after confirmation. Focus moves to the next ready row, then the previous row,
+then Refresh if the removed row owned focus. Delete presents one batch
 confirmation. Rename preserves the extension. Unfinished/unrecognized containers
 are listed without selection controls. Results and per-file details are ordinary
 text for navigation, with no live announcements or automatic result speech.
 
 The Activity section contains a labelled native progress bar. Screen readers
-can announce/beep percentage changes using their own progress settings. Transfer
-percentage applies to the named current file; batch counts and verification
+can inspect its indeterminate active state; batch counts and results
 remain available as ordinary text. Name each window in Settings; the title is
-used in Alt+Tab. Windows share the phone, folder and preferences.
+used in Alt+Tab. Windows share the phone and preferences.
 
 The ready-to-speak cue is enabled by default. After a new Start, wait for its
 short PC tone to finish before speaking. **Preparing to speak** and **Ready to

@@ -1,4 +1,8 @@
-import { initialSession, defaultSettings } from './types';
+import {
+  initialSession,
+  defaultSettings,
+  withoutDesktopDestination,
+} from './types';
 import type {
   JobEvent,
   Video,
@@ -7,8 +11,11 @@ import type {
   SessionState,
   FileNotice,
   RenameUpdate,
+  HandoffUpdate,
 } from './types';
 import { RenameUpdates } from './rename-updates';
+import { HandoffUpdates } from './handoff-updates';
+import { videoKey } from './videos';
 import { FileResultsController, type FileResultView } from './file-results';
 import { RecordingController } from './recording';
 import { ipc } from './ipc';
@@ -26,6 +33,7 @@ export function createSession() {
     settings: { ...defaultSettings },
     windowName: '',
     videos: [] as Video[],
+    pendingKeys: [] as string[],
     listingGeneration: 0,
     jobs: [] as JobEvent[],
     fileResults: { notices: [], history: [] } as FileResultView,
@@ -49,6 +57,37 @@ export function createSession() {
   const terminalJobs = new Set<string>();
   const discardResults = new Set<string>();
   const renameUpdates = new RenameUpdates();
+  const handoffUpdates = new HandoffUpdates();
+  const pending = new Map<
+    number,
+    {
+      generation: number;
+      kind: string;
+      sources: Video[];
+      id?: string;
+    }
+  >();
+  let nextRequest = 0;
+  function syncPending() {
+    data.pendingKeys = [
+      ...new Set(
+        [...pending.values()].flatMap((request) =>
+          request.sources.map(videoKey),
+        ),
+      ),
+    ];
+  }
+  function releaseJob(id: string) {
+    for (const [key, request] of pending)
+      if (request.id === id) pending.delete(key);
+    syncPending();
+  }
+  function applyUpdates(videos: Video[], generation: number) {
+    return handoffUpdates.apply(
+      renameUpdates.apply(videos, generation),
+      generation,
+    );
+  }
   const sound = (success: boolean) => {
     if (!success || data.settings.success_sound)
       void ipc.sound(success).catch(() => {});
@@ -80,6 +119,9 @@ export function createSession() {
       ) {
         refreshSerial++;
         renameUpdates.reset(session.generation);
+        handoffUpdates.reset(session.generation);
+        pending.clear();
+        syncPending();
         data.videos = [];
         data.listingGeneration = 0;
         data.jobs = [];
@@ -109,7 +151,10 @@ export function createSession() {
       event.status,
     );
     if (!terminal && terminalJobs.has(event.id)) return;
-    if (terminal) terminalJobs.add(event.id);
+    if (terminal) {
+      terminalJobs.add(event.id);
+      releaseJob(event.id);
+    }
     const index = data.jobs.findIndex((job) => job.id === event.id);
     if (index >= 0) {
       const previous = data.jobs[index].status;
@@ -133,6 +178,31 @@ export function createSession() {
   async function initialize() {
     try {
       const outcomes = await Promise.allSettled([
+        ipc.listen<HandoffUpdate>('file-handed-off', (update) => {
+          if (
+            destroyed ||
+            !data.session.connected ||
+            !handoffUpdates.record(update)
+          )
+            return;
+          refreshSerial++;
+          data.loading = false;
+          data.videos = applyUpdates(data.videos, data.session.generation);
+          for (const [key, request] of pending) {
+            if (
+              request.generation !== update.generation ||
+              request.kind !== 'mark'
+            )
+              continue;
+            request.sources = request.sources.filter(
+              (source) =>
+                source.name !== update.source_name ||
+                source.identity !== update.source_identity,
+            );
+            if (!request.sources.length) pending.delete(key);
+          }
+          syncPending();
+        }),
         ipc.listen<RenameUpdate>('file-renamed', (update) => {
           if (
             destroyed ||
@@ -142,10 +212,7 @@ export function createSession() {
             return;
           refreshSerial++;
           data.loading = false;
-          data.videos = renameUpdates.apply(
-            data.videos,
-            data.session.generation,
-          );
+          data.videos = applyUpdates(data.videos, data.session.generation);
         }),
         ipc.listen<{ revision: number }>('file-results-changed', (value) => {
           if (!destroyed) void fileResults.refresh(value.revision);
@@ -153,7 +220,7 @@ export function createSession() {
         ipc.listen<Settings>('settings-changed', (settings) => {
           if (!destroyed) {
             settingsRevision++;
-            data.settings = settings;
+            data.settings = withoutDesktopDestination(settings);
           }
         }),
         ipc.listen<{ bytes: number; total: number }>(
@@ -240,7 +307,8 @@ export function createSession() {
       const requestedAt = performance.now();
       const initial = await ipc.bootstrap();
       if (destroyed) return;
-      if (settingsRevision === revision) data.settings = initial.settings;
+      if (settingsRevision === revision)
+        data.settings = withoutDesktopDestination(initial.settings);
       data.windowName = initial.window_name;
       controller.reconcile(initial.session);
       fileResults.accept(initial.file_results, requestedAt);
@@ -289,8 +357,9 @@ export function createSession() {
         request === refreshSerial &&
         generation === data.session.generation
       ) {
-        data.videos = renameUpdates.apply(videos, generation);
+        data.videos = applyUpdates(videos, generation);
         data.listingGeneration = generation;
+        handoffUpdates.settle();
       }
     } catch (error) {
       if (
@@ -306,11 +375,12 @@ export function createSession() {
   async function save(settings: Settings) {
     try {
       const revision = settingsRevision;
-      const saved = await ipc.save(settings);
+      const saved = await ipc.save(withoutDesktopDestination(settings));
       if (destroyed) return;
       // Rust serializes persistence and broadcasts under the shared lock.
       // A response cannot replace a newer authoritative broadcast.
-      if (revision === settingsRevision) data.settings = saved;
+      if (revision === settingsRevision)
+        data.settings = withoutDesktopDestination(saved);
       data.result = 'saved';
       sound(true);
     } catch (error) {
@@ -353,6 +423,8 @@ export function createSession() {
     unlisten = [];
     if (flush) clearTimeout(flush);
     progress.clear();
+    pending.clear();
+    syncPending();
   }
   return {
     data,
@@ -389,13 +461,32 @@ export function createSession() {
       listingGeneration = data.listingGeneration,
     ) => {
       const generation = data.session.generation;
+      if (!['mark', 'delete', 'rename'].includes(kind)) {
+        fail('invalid_file_job');
+        return;
+      }
       if (!data.session.connected || listingGeneration !== generation) {
         fail('session_replaced');
         return;
       }
+      if (!videos.length || videos.some((video) => !video.ready)) {
+        fail('file_not_ready');
+        return;
+      }
+      if (videos.some((video) => data.pendingKeys.includes(videoKey(video)))) {
+        fail('file_busy');
+        return;
+      }
+      const token = ++nextRequest;
+      pending.set(token, { generation, kind, sources: [...videos] });
+      syncPending();
       void ipc
         .job(kind, videos, generation, stem)
         .then((id) => {
+          const request = pending.get(token);
+          if (!request) return;
+          request.id = id;
+          if (terminalJobs.has(id)) releaseJob(id);
           if (
             !destroyed &&
             generation === data.session.generation &&
@@ -409,8 +500,6 @@ export function createSession() {
                 kind,
                 status: 'queued',
                 name: '',
-                bytes: 0,
-                total: videos.reduce((sum, video) => sum + video.size, 0),
                 count: videos.length,
                 completed: 0,
                 message: '',
@@ -419,7 +508,12 @@ export function createSession() {
               ...data.jobs,
             ]);
         })
-        .catch((error) => fail(String(error)));
+        .catch((error) => {
+          pending.delete(token);
+          syncPending();
+          if (!destroyed && generation === data.session.generation)
+            fail(String(error));
+        });
     },
     cancel: (id: string) => {
       void ipc.cancel(id).catch((error) => fail(String(error)));

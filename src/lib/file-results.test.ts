@@ -5,7 +5,7 @@ import { FileResultsController, type FileResultView } from './file-results';
 const success: FileNotice = {
   key: { generation: 7, owner: 'job', operation_id: 'copy-1' },
   revision: 1,
-  kind: 'copy',
+  kind: 'mark',
   outcome: 'completed',
   code: 'completed',
   warnings: [],

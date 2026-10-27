@@ -1,6 +1,6 @@
 [package]
 name = "takedock"
-version = "0.1.5"
+version = "0.2.0"
 edition = "2024"
 rust-version = "1.98"
 license = "MIT"
@@ -21,6 +21,7 @@ required-features = ["desktop"]
 
 [features]
 default = []
+transfer-diagnostics = []
 desktop = ["dep:tauri", "dep:tauri-build", "dep:tauri-plugin-dialog", "dep:tauri-plugin-updater", "dep:tauri-plugin-single-instance"]
 custom-protocol = ["tauri/custom-protocol"]
 

@@ -7,9 +7,9 @@ fn model() -> FileResults {
     model
 }
 pub(super) fn job(id: &str, status: &str) -> Value {
-    json!({"generation":7,"id":id,"kind":"copy","status":status,
+    json!({"generation":7,"id":id,"kind":"mark","status":status,
         "name":"رحلة.mp4","completed":usize::from(status == "completed"),"count":1,
-        "message":if status == "failed" {"copy_hash_mismatch"} else {""},
+        "message":if status == "failed" {"handoff_failed"} else {""},
         "results":[{"name":"رحلة.mp4","status":status,"message":""}]})
 }
 pub(super) fn warning(id: &str, code: &str) -> Value {
@@ -17,6 +17,19 @@ pub(super) fn warning(id: &str, code: &str) -> Value {
 }
 fn discard(id: &str, status: &str) -> Value {
     json!({"generation":7,"operation_id":id,"status":status,"code":format!("discard_{status}")})
+}
+
+#[test]
+fn handoff_unknown_remains_distinct_and_does_not_expire() {
+    let mut model = model();
+    let event = json!({"generation":7,"id":"mark-unknown","kind":"mark","status":"failed",
+        "name":"take.mp4","completed":0,"count":1,"message":"handoff_outcome_unknown",
+        "results":[{"name":"take.mp4","status":"outcome_unknown","message":"handoff_outcome_unknown"}]});
+    assert!(model.receive("file-job", &event, 0));
+    let snapshot = model.snapshot(120_000);
+    assert_eq!(snapshot.notices.len(), 1);
+    assert_eq!(snapshot.notices[0].outcome, FileOutcome::OutcomeUnknown);
+    assert_eq!(snapshot.notices[0].expires_at_ms, None);
 }
 
 #[test]

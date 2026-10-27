@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use std::{
     collections::BTreeMap,
     sync::{
-        Arc,
+        Arc, Mutex,
         atomic::{AtomicBool, AtomicU8, Ordering},
     },
 };
@@ -115,7 +115,10 @@ pub struct DiscardMachine {
     take: Option<Take>,
     operation: Option<Operation>,
     results: Vec<DiscardResult>,
+    handed_off: HandoffHistory,
 }
+type HandoffNames = BTreeMap<String, u128>;
+type HandoffHistory = Arc<Mutex<BTreeMap<(u64, u64), HandoffNames>>>;
 impl DiscardMachine {
     pub(crate) fn observe_state(&mut self, eligible: bool, state: crate::model::RecordingState) {
         let confirmed = self
@@ -137,6 +140,7 @@ impl DiscardMachine {
             take: None,
             operation: None,
             results: Vec::new(),
+            handed_off: Arc::new(Mutex::new(BTreeMap::new())),
         }
     }
     pub fn start_queued(
@@ -291,6 +295,13 @@ impl DiscardMachine {
                 .is_none_or(|current| current.token != *take)
         {
             return Err("discard_take_replaced".into());
+        }
+        if self
+            .take
+            .as_ref()
+            .is_some_and(|take| self.take_handed_off(take))
+        {
+            return Err("discard_file_handed_off".into());
         }
         if let Some(operation) = &self.operation {
             if operation.receipt.take == *take {
@@ -485,6 +496,41 @@ impl DiscardMachine {
             _ => Vec::new(),
         }
     }
+    fn take_handed_off(&self, take: &Take) -> bool {
+        take.candidate.as_ref().is_some_and(|candidate| {
+            self.handed_off
+                .lock()
+                .unwrap()
+                .get(&(candidate.identity.device, candidate.identity.inode))
+                .and_then(|names| names.get(candidate.name.as_str()))
+                .is_some_and(|cutoff| candidate.identity.changed_ns <= *cutoff)
+        })
+    }
+    pub fn handed_off(&mut self, name: &str, expected: &Identity) -> bool {
+        // Shared with prediction rollback clones, but scoped to this generation.
+        self.handed_off
+            .lock()
+            .unwrap()
+            .entry((expected.device, expected.inode))
+            .or_default()
+            .entry(name.into())
+            .and_modify(|cutoff| *cutoff = (*cutoff).max(expected.changed_ns))
+            .or_insert(expected.changed_ns);
+        let matching = self
+            .take
+            .as_ref()
+            .and_then(|take| take.candidate.as_ref())
+            .is_some_and(|candidate| {
+                candidate.name == name
+                    && candidate.identity.device == expected.device
+                    && candidate.identity.inode == expected.inode
+                    && candidate.identity.changed_ns <= expected.changed_ns
+            });
+        if matching {
+            self.cancel("discard_file_handed_off");
+        }
+        matching
+    }
     pub fn cancel(&mut self, code: &str) {
         if let Some(take) = &mut self.take {
             take.valid = false;
@@ -578,6 +624,7 @@ impl DiscardMachine {
     }
     pub fn snapshot(&self) -> DiscardSnapshot {
         let take = self.take.as_ref();
+        let handed_off = take.is_some_and(|take| self.take_handed_off(take));
         let operation = self.operation.as_ref();
         let operation_current = operation
             .is_some_and(|operation| take.is_some_and(|take| take.token == operation.receipt.take));
@@ -589,15 +636,20 @@ impl DiscardMachine {
             } else {
                 operation.phase
             }
-        } else if take.is_some_and(|take| take.valid) {
+        } else if !handed_off && take.is_some_and(|take| take.valid) {
             DiscardPhase::Tracking
         } else {
             DiscardPhase::Unavailable
         };
         DiscardSnapshot {
             take: take.map(|take| take.token.clone()),
-            eligible: take.is_some_and(|take| take.valid) && !operation_current && !busy,
-            reason: if operation_current {
+            eligible: !handed_off
+                && take.is_some_and(|take| take.valid)
+                && !operation_current
+                && !busy,
+            reason: if handed_off {
+                "discard_file_handed_off".into()
+            } else if operation_current {
                 operation.unwrap().code.clone()
             } else {
                 take.map(|take| take.reason.clone())

@@ -50,21 +50,27 @@ fn run() -> Result<(), String> {
                 &mut std::io::stdout().lock(),
             )?;
         }
-        ["hash", name, expected] => {
-            if !root.video_ready(name)? {
-                return Err("video_not_finalized".into());
+        ["handoff-guarded", name, expected, operation] => {
+            use takedock_files::handoff::{self, Message, Outcome};
+            let expected: Identity = serde_json::from_str(expected).map_err(|e| e.to_string())?;
+            match handoff::open_destination() {
+                Ok(target) => handoff::serve(
+                    &root,
+                    &target,
+                    name,
+                    &expected,
+                    operation,
+                    handoff::read_permit_stdin,
+                    &mut std::io::stdout().lock(),
+                )?,
+                Err(code) => handoff::write_message(
+                    &mut std::io::stdout().lock(),
+                    &Message::Result {
+                        operation_id: (*operation).into(),
+                        outcome: Outcome::Retained { code },
+                    },
+                )?,
             }
-            let expected: Identity =
-                serde_json::from_str(expected).map_err(|error| error.to_string())?;
-            println!("{}", root.hash(name, &expected)?);
-        }
-        ["read", name, expected] => {
-            if !root.video_ready(name)? {
-                return Err("video_not_finalized".into());
-            }
-            let expected: Identity =
-                serde_json::from_str(expected).map_err(|error| error.to_string())?;
-            root.read(name, &expected, &mut std::io::stdout().lock())?;
         }
         ["rename", name, new_name, expected] => {
             if !root.video_ready(name)? {

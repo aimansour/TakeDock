@@ -164,6 +164,48 @@ fn prepared_delete() -> (DiscardMachine, String) {
 }
 
 #[test]
+fn handoff_retires_only_matching_take_and_cannot_be_undone_by_prediction_rollback() {
+    let (mut machine, operation) = prepared_delete();
+    let before = machine.snapshot();
+    assert!(!machine.handed_off("unrelated.mp4", &entry().identity));
+    assert_eq!(machine.snapshot(), before);
+    let mut rollback = machine.clone();
+    assert!(machine.handed_off("take.mp4", &entry().identity));
+    assert!(!machine.snapshot().eligible);
+    assert!(!rollback.snapshot().eligible);
+    assert!(!rollback.authorize_delete(&operation));
+    assert!(rollback.request(&token(1), 1200, 10_000).is_err());
+}
+
+#[test]
+fn handoff_of_an_older_take_does_not_reappear_after_a_new_start_rolls_back() {
+    let (mut machine, _) = prepared_delete();
+    let mut rollback = machine.clone();
+    machine.start_queued(token(2), Some(evidence()), true, 1300);
+    let before = machine.snapshot();
+    assert!(!machine.handed_off("take.mp4", &entry().identity));
+    assert_eq!(machine.snapshot(), before);
+    assert!(rollback.request(&token(1), 1301, 10_000).is_err());
+}
+
+#[test]
+fn late_handoff_cannot_retire_a_reused_name_and_inode_with_a_newer_identity() {
+    let (mut machine, _) = prepared_delete();
+    machine
+        .take
+        .as_mut()
+        .unwrap()
+        .candidate
+        .as_mut()
+        .unwrap()
+        .identity
+        .changed_ns = 100_000_100;
+    let before = machine.snapshot();
+    assert!(!machine.handed_off("take.mp4", &entry().identity));
+    assert_eq!(machine.snapshot(), before);
+}
+
+#[test]
 fn discard_stop_is_requested_once_at_the_600ms_boundary() {
     let (mut machine, take) = managed_take();
     machine.request(&take, 101, 10_000).unwrap();

@@ -3675,7 +3675,7 @@ dependencies = [
 
 [[package]]
 name = "takedock"
-version = "0.1.5"
+version = "0.2.0"
 dependencies = [
  "base64 0.23.1",
  "minisign-verify",
@@ -3711,7 +3711,6 @@ dependencies = [
  "libc",
  "serde",
  "serde_json",
- "sha2 0.11.1",
  "tempfile",
  "uuid",
  "windows-sys 0.61.2",

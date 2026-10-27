@@ -84,11 +84,9 @@ it('success_expires_from_notice_activity_and_expanded_job_surfaces', async () =>
   const terminal = {
     id: 'copy-done',
     generation: 7,
-    kind: 'copy',
+    kind: 'mark',
     status: 'completed',
     name: 'clip.mp4',
-    bytes: 10,
-    total: 10,
     completed: 1,
     count: 1,
     message: '',

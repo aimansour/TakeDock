@@ -12,6 +12,19 @@ failures, cancellation during streaming and held hashing, and concurrent capture
 The external executable fixture shares the MIT native helper's filesystem code;
 it never forwards to real ADB. Linux-only symlink/newline cases run in Linux CI.
 
+The hosted fixture pipeline also runs with `transfer-diagnostics`. Held-hash
+regressions modify the actual desktop partial without changing its length, or
+create a final destination sentinel after streaming. Both must retain the phone
+source, reject publication and remove only the owned partial. The existing
+two-second held-hash cancellation bound and concurrent capture checks remain.
+Native case 3 selects Copy through the ordinary controls, creates the collision
+while hashing is held, and verifies the persistent truthful result and dismissal;
+the four case titles and their shared time limits remain unchanged.
+
+See [large-file transfer measurements](transfer-performance.md) for the separate
+real-phone performance harness. Full decoding and immutable preservation backups
+are harness checks outside timed intervals, not production deletion work.
+
 On 2026-10-01, the Android 16 phone passed the native stat/hash/rename/delete
 probe and the `device-files` acceptance helper with Open Camera force-stopped.
 Exactly two recordings previously created for this project's tests were selected

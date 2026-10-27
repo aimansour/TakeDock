@@ -70,6 +70,11 @@ fn successful_process_trial_preserves_verified_bytes_before_deletion() {
             .any(|p| p.to_string_lossy().ends_with("receipt.json"))
     );
     assert!(fixture.path().join("decode-started").exists());
+    let helper_calls = fs::read_to_string(fixture.path().join("helper-calls.jsonl")).unwrap();
+    assert!(!helper_calls.lines().any(|line| {
+        let args: Vec<String> = serde_json::from_str(line).unwrap();
+        ["read", "hash"].contains(&args[0].as_str())
+    }));
 }
 #[test]
 fn failed_decode_or_read_never_starts_the_remote_permit_wait() {

@@ -1,4 +1,5 @@
 #![allow(dead_code)]
+pub mod jsonl;
 use std::{
     path::{Path, PathBuf},
     sync::{Arc, atomic::AtomicBool},
@@ -46,7 +47,7 @@ impl Fixture {
             .join(if cfg!(windows) { "adb.exe" } else { "adb" });
         std::fs::copy(env!("CARGO_BIN_EXE_takedock-adb-fixture"), &executable).unwrap();
         std::fs::create_dir(root.path().join("videos")).unwrap();
-        std::fs::create_dir(root.path().join("destination")).unwrap();
+        std::fs::create_dir(root.path().join("handoff")).unwrap();
         std::fs::create_dir_all(root.path().join("file-helper/arm64-v8a")).unwrap();
         std::fs::write(
             root.path().join("file-helper/arm64-v8a/takedock-files"),

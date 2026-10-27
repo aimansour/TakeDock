@@ -32,9 +32,22 @@ authored Rust Android helper validates a fixed no-symlink directory and source
 device/inode/size/mtime/ctime, conservatively checks finalized containers, and uses
 atomic no-replace mutations and precommit recovery journals. Android private-storage
 Bionic locks serialize helpers because shared-storage FUSE does not provide flock.
-Copies stream to unique desktop partials, sync, revalidate source, hash both sides,
-and publish without overwrite. Move commits deletion only afterwards. Identities
+Mark uses a bounded prepared/permit/result exchange and a same-filesystem
+no-replace phone-directory move into DCIM/TakeDock. No video payload or hash
+crosses to Windows. Only a confirmed receipt retires the exact source row and
+current-take discard target. Lost acknowledgement is unknown, without retry.
+The source worker never enumerates or manages the destination collection.
+Best-effort exact-path media notifications run on one bounded owned queue,
+independent of file mutation settlement. Identities
 cross JavaScript as opaque text to preserve nanosecond precision.
+
+The optional development-only `transfer-diagnostics` feature records bounded
+per-job QPC stage observations without choosing a different file-operation algorithm.
+Default builds create no diagnostic state or writer. Dropped observations, writer
+failure, incomplete footers or mismatched clocks invalidate benchmark evidence;
+they cannot turn a failed operation into a fast success. Real-phone acceptance
+compares backend and native UI totals; owned-fixture integrity checks stay outside
+mark timing and are not part of production handoff.
 
 Settings persist in the per-user profile. Tauri capabilities expose event subscription
 and native dialogs; frontend filesystem/shell/general updater permissions are absent.
@@ -46,13 +59,14 @@ Named windows share the same Runtime/Engine/FileService/settings. Narrow window
 commands create/rename windows without broad frontend window permissions. Settings
 broadcasts and bounded job snapshots initialize every window; backend result
 feedback sounds once, independently of frontend window count. Startup update
-checking has one process owner. Empty destinations migrate to Videos/TakeDock.
+checking has one process owner. Obsolete desktop destination fields are ignored
+on load and omitted on save, without creating any Windows video folder.
 
 The bounded finalized-container reader also supplies milliseconds from MP4 mvhd
 timescales/version 0/1 or WebM Info Duration/TimestampScale. Unavailable durations
 remain explicit. Ordering uses full source modification nanoseconds in Rust.
-Native labelled progress exposes transfer percentages to the reader; unknown
-listing/verification durations use indeterminate progress, without live regions.
+Native labelled progress is indeterminate during listing/file work; batch counts
+and results use ordinary text without live regions.
 
 CI runs a separate fake ADB process against the actual release EXE, WebView2 and
 Rust IPC. It does not inject test behavior into the product. Four mandatory cases

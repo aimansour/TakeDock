@@ -22,6 +22,10 @@ jobs:
       - run: cargo fmt --all --check
       - run: cargo clippy --workspace --all-targets --locked -- -D warnings
       - run: cargo test --workspace --locked
+      - name: Diagnostic phone file pipeline regressions
+        env:
+          TAKEDOCK_TRANSFER_TRACE: ${{ runner.temp }}/takedock-transfer-diagnostic.jsonl
+        run: cargo test --locked -p takedock-adb-fixture --features transfer-diagnostics --test files -- --test-threads=1
   ui:
     runs-on: ubuntu-24.04
     steps:
@@ -99,6 +103,21 @@ jobs:
       - run: cargo clippy --workspace --all-targets --features desktop --locked -- -D warnings
       - run: cargo test --workspace --locked
       - run: npm run desktop:build -- --no-bundle
+      - name: Transfer benchmark safety and measurement tests
+        shell: pwsh
+        run: |
+          foreach ($suite in @('Core', 'Device', 'Ui', 'Stage')) {
+            & pwsh -NoProfile -File "scripts/transfer-benchmark/$suite.test.ps1"
+            if ($LASTEXITCODE -ne 0) { throw "$suite transfer benchmark tests failed" }
+          }
+      - name: Owned phone trial guards and controller syntax
+        shell: pwsh
+        run: |
+          & pwsh -NoProfile -File scripts/phone-handoff/Guard.test.ps1
+          if($LASTEXITCODE -ne 0){throw 'Owned phone trial guards failed'}
+          $controllerTokens=$null; $controllerErrors=$null
+          $null=[Management.Automation.Language.Parser]::ParseFile((Join-Path (Get-Location) 'scripts/test-phone-handoff.ps1'),[ref]$controllerTokens,[ref]$controllerErrors)
+          if($controllerErrors.Count){$controllerErrors|Format-List;throw 'Phone trial controller syntax failed'}
       - run: ./scripts/check-updater.ps1
       - name: Four mandatory real release Desktop E2E cases
         run: |
