@@ -412,6 +412,27 @@ describe('TakeDock release desktop acceptance', () => {
     await waitFor(() =>
       existsSync(join(fixtureRoot, 'handoff', 'take-0002.mp4')),
     );
+    await waitFor(async () => !(await sourceRow('take-0002.mp4').isExisting()));
+    const handoffFocus = () =>
+      browser.execute(() => ({
+        tag: document.activeElement?.tagName,
+        name:
+          document.activeElement
+            ?.closest('tr')
+            ?.querySelector('td:nth-child(2) bdi')?.textContent ?? null,
+      }));
+    try {
+      await browser.waitUntil(
+        async () => (await handoffFocus()).name === 'take-0001.mp4',
+        { timeout: 1000, interval: 50 },
+      );
+    } catch {
+      assert.deepEqual(
+        await handoffFocus(),
+        { tag: 'BUTTON', name: 'take-0001.mp4' },
+        'A focused Mark must retain its keyboard context through pending disable and confirmed row removal',
+      );
+    }
     await button('Recording').click();
     await waitFor(async () => {
       const result = await browser.execute(async () => {

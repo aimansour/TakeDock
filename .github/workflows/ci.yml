@@ -110,6 +110,14 @@ jobs:
             & pwsh -NoProfile -File "scripts/transfer-benchmark/$suite.test.ps1"
             if ($LASTEXITCODE -ne 0) { throw "$suite transfer benchmark tests failed" }
           }
+      - name: Owned phone trial guards and controller syntax
+        shell: pwsh
+        run: |
+          ./scripts/phone-handoff/Guard.test.ps1
+          if($LASTEXITCODE -ne 0){throw 'Owned phone trial guards failed'}
+          $controllerTokens=$null; $controllerErrors=$null
+          $null=[Management.Automation.Language.Parser]::ParseFile((Join-Path (Get-Location) 'scripts/test-phone-handoff.ps1'),[ref]$controllerTokens,[ref]$controllerErrors)
+          if($controllerErrors.Count){$controllerErrors|Format-List;throw 'Phone trial controller syntax failed'}
       - run: ./scripts/check-updater.ps1
       - name: Four mandatory real release Desktop E2E cases
         run: |
