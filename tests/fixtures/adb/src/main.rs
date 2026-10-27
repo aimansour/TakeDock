@@ -250,8 +250,9 @@ fn main() {
             }
         }
         ["push", from, to] => {
-            fs::write(root.join("helper-push-started"), b"").unwrap();
             fs::write(root.join("helper-push-pid"), std::process::id().to_string()).unwrap();
+            // Publish readiness only after its dependent PID file is complete.
+            fs::write(root.join("helper-push-started"), b"").unwrap();
             while root.join("hold-helper-push").exists() {
                 thread::sleep(Duration::from_millis(10));
             }
