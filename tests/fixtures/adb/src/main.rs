@@ -88,6 +88,7 @@ fn main() {
                     .open(root.join("commands.jsonl"))
                     .unwrap();
                 writeln!(trace, "{}", json!({"key":key,"command":line,"time":SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis()})).unwrap();
+                let _state_lock = fixture_state_lock(&root);
                 let mut state = read_state(&root);
                 let previous_state = state["state"].as_str().unwrap_or("idle").to_owned();
                 state["state"] = json!(match (key, state["state"].as_str().unwrap_or("idle")) {
@@ -142,7 +143,7 @@ fn main() {
                 }
                 fs::write(root.join("state.tmp"), state.to_string()).unwrap();
                 fs::rename(root.join("state.tmp"), root.join("state.json")).unwrap();
-                finish_fixture_take(&root);
+                finish_fixture_take_locked(&root);
                 let marker = line
                     .split("echo ")
                     .nth(1)
@@ -468,7 +469,22 @@ fn file_command(root: &Path, args: &[String]) -> Result<(), String> {
     }
     Ok(())
 }
+fn fixture_state_lock(root: &Path) -> fs::File {
+    let handle = fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .read(true)
+        .write(true)
+        .open(root.join("capture-state.lock"))
+        .unwrap();
+    handle.lock().unwrap();
+    handle
+}
 fn finish_fixture_take(root: &Path) {
+    let _state_lock = fixture_state_lock(root);
+    finish_fixture_take_locked(root);
+}
+fn finish_fixture_take_locked(root: &Path) {
     if !root.join("record-take-files").exists()
         || root.join("hold-finalization").exists()
         || read_state(root)["state"] != "idle"
