@@ -38,7 +38,7 @@ tauri-plugin-updater = {version = "=2.14.0",optional = true}
 tauri-plugin-single-instance = {version = "=2.5.4",optional = true}
 
 [build-dependencies]
-tauri-build = {version = "=2.7.3", optional = true, features = [] }
+tauri-build = {version = "=2.7.4", optional = true, features = [] }
 
 [dev-dependencies]
 minisign-verify = "=0.3.0"
